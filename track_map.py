@@ -4,11 +4,13 @@ import pandas as pd
 import os
 
 YEAR = 2023
-GP = 'Abu Dhabi'
+GP = 'Baku'
 SESSION = 'Q'
 CACHE_DIR = 'cache'
-TRACK_FILE = f"{GP}_{YEAR}_track_layout.csv"
-CORNERS_FILE = f"{GP}_{YEAR}_corners.csv"
+DATA_DIR = 'data'
+os.makedirs(DATA_DIR, exist_ok=True)
+TRACK_FILE =   os.path.join(DATA_DIR,f"{GP}_{YEAR}_track_layout.csv")
+CORNERS_FILE = os.path.join(DATA_DIR,f"{GP}_{YEAR}_corners.csv")
 
 def rotate(xy, *, angle):
     rot_mat = np.array([
@@ -29,7 +31,7 @@ def get_track_data():
     pos = lap.get_telemetry()
     circuit_info = session.get_circuit_info()
     
-    # 1. Track Processing
+    # Track Processing
     track = pos.loc[:, ('X', 'Y')].to_numpy()
     track_angle = circuit_info.rotation / 180 * np.pi
     rotated_track = rotate(track, angle=track_angle)
@@ -40,7 +42,7 @@ def get_track_data():
         'distance': pos['Distance'].to_numpy()
     })
     
-    # 2. Corner Processing
+    # Corner Processing
     corners = circuit_info.corners
     offset_vector = np.array([[500, 0]])
     
@@ -78,6 +80,6 @@ def get_track_data():
 if __name__ == "__main__":
     try:
         track, corners, name = get_track_data()
-        print(f"✅ Data generated: {TRACK_FILE}, {CORNERS_FILE}")
+        print(f" Data generated: {TRACK_FILE}, {CORNERS_FILE}")
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f" Error: {e}")

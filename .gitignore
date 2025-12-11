@@ -1,4 +1,5 @@
 __pycache__/
 *.sqlite
 cache/
+data/
 .vscode/
