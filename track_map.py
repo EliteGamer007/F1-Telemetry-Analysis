@@ -3,8 +3,8 @@ import numpy as np
 import pandas as pd
 import os
 
-YEAR = 2023
-GP = 'Baku'
+YEAR = 2025
+GP = 'Monaco'
 SESSION = 'Q'
 CACHE_DIR = 'cache'
 DATA_DIR = 'data'
@@ -46,7 +46,7 @@ def get_track_data():
     corners = circuit_info.corners
     offset_vector = np.array([[500, 0]])
     
-    corner_x, corner_y, label_x, label_y = [], [], [], []
+    corner_x, corner_y, label_x, label_y, corner_distances = [], [], [], [], []
     
     for _, row in corners.iterrows():
         corner_angle = row['Angle'] / 180 * np.pi
@@ -62,10 +62,15 @@ def get_track_data():
         corner_y.append(final_corner[1])
         label_x.append(final_text[0])
         label_y.append(final_text[1])
+        
+        # Find closest distance in telemetry
+        dist = row.get('Distance', 0)
+        corner_distances.append(dist)
 
     corners_df = pd.DataFrame({
         'Number': corners['Number'],
         'Letter': corners['Letter'],
+        'distance': corner_distances,
         'x': corner_x,
         'y': corner_y,
         'label_x': label_x,
