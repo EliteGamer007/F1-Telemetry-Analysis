@@ -264,149 +264,141 @@ def get_sector_boundaries(track_df: pd.DataFrame) -> Tuple[float, float]:
 # ─────────────────────────────────────────────────────────────────
 
 def render_timing_tower(leaderboard_df: pd.DataFrame, driver_colors_map: Dict):
-    """Render F1-style timing tower."""
-    st.markdown("""
+    """Render F1-style timing tower using HTML with tyre images."""
+    
+    # Tyre image mapping
+    tyre_img_map = {
+        'SOFT': 'images/Soft.jpg',
+        'MEDIUM': 'images/Medium.jpg',
+        'HARD': 'images/Hard.jpg',
+        'INTERMEDIATE': 'images/Intermediate.jpg',
+        'WET': 'images/Wet.jpg'
+    }
+    
+    html_content = """
     <style>
-    div.timing-tower {
-        background: linear-gradient(180deg, #15151e 0%, #1a1a2e 100%);
-        border-radius: 8px;
-        padding: 8px;
-        font-family: 'Segoe UI', sans-serif;
+    .timing-tower {
+        background: linear-gradient(180deg, #0a0a0f 0%, #15151e 100%);
+        border-radius: 10px;
+        padding: 12px;
+        font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
-    div.timing-tower .timing-header {
-        display: flex;
-        padding: 4px 10px;
-        font-size: 10px;
-        color: #888;
-        border-bottom: 1px solid #333;
-        margin-bottom: 4px;
-    }
-    div.timing-tower .timing-row {
+    .timing-row {
         display: flex;
         align-items: center;
-        padding: 5px 8px;
-        border-radius: 3px;
-        margin: 1px 0;
-        background: rgba(255,255,255,0.03);
-        transition: background 0.2s;
+        padding: 6px 8px;
+        border-radius: 4px;
+        margin: 2px 0;
+        background: rgba(255,255,255,0.02);
+        transition: all 0.2s ease;
+        border-left: 3px solid transparent;
     }
-    div.timing-tower .timing-row:hover {
-        background: rgba(255,255,255,0.08);
+    .timing-row:hover {
+        background: rgba(255,255,255,0.06);
+        transform: translateX(2px);
     }
-    div.timing-tower .pos-badge {
-        width: 22px;
-        height: 22px;
-        border-radius: 3px;
+    .pos-badge {
+        min-width: 26px;
+        height: 26px;
+        border-radius: 4px;
         display: flex;
         align-items: center;
         justify-content: center;
         font-weight: bold;
-        font-size: 11px;
-        margin-right: 6px;
-    }
-    div.timing-tower .team-bar {
-        width: 4px;
-        height: 20px;
-        border-radius: 2px;
+        font-size: 13px;
         margin-right: 8px;
     }
-    div.timing-tower .driver-name {
-        width: 45px;
-        font-weight: 600;
-        font-size: 13px;
-        color: white;
+    .driver-abbr {
+        font-weight: 700;
+        font-size: 15px;
+        color: #fff;
+        min-width: 50px;
+        letter-spacing: 0.5px;
     }
-    div.timing-tower .lap-time {
-        font-family: 'Consolas', monospace;
-        font-size: 12px;
-        color: #00ff88;
-        width: 75px;
-        text-align: right;
-    }
-    div.timing-tower .gap-time {
-        font-family: 'Consolas', monospace;
+    .sector-time {
+        font-family: 'Consolas', 'Courier New', monospace;
         font-size: 11px;
-        color: #ff6b6b;
-        width: 65px;
-        text-align: right;
-    }
-    div.timing-tower .tyre-indicator {
-        width: 20px;
-        height: 20px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin-left: 6px;
-        font-size: 9px;
-        font-weight: bold;
-        color: #000;
-    }
-    div.timing-tower .sector-box {
-        font-family: 'Consolas', monospace;
-        font-size: 10px;
-        padding: 2px 4px;
-        border-radius: 2px;
-        margin: 0 1px;
-        min-width: 42px;
+        padding: 3px 6px;
+        border-radius: 3px;
+        margin: 0 2px;
+        min-width: 50px;
         text-align: center;
+        background: rgba(255,255,255,0.05);
+        color: #bbb;
     }
-    div.timing-tower .sector-purple {
-        background: #9B59B6;
-        color: white;
+    .sector-time.best {
+        background: #a855f7;
+        color: #fff;
+        font-weight: 600;
     }
-    div.timing-tower .sector-green {
-        background: #27ae60;
-        color: white;
+    .laptime {
+        font-family: 'Consolas', 'Courier New', monospace;
+        font-size: 13px;
+        color: #10b981;
+        font-weight: 600;
+        min-width: 85px;
+        margin-left: 6px;
     }
-    div.timing-tower .sector-yellow {
-        background: #f1c40f;
-        color: #000;
+    .gap {
+        font-family: 'Consolas', 'Courier New', monospace;
+        font-size: 12px;
+        color: #ef4444;
+        min-width: 70px;
+        text-align: right;
+        margin-left: auto;
     }
-    div.timing-tower .sector-normal {
-        background: rgba(255,255,255,0.1);
-        color: #aaa;
+    .tyre-img {
+        width: 22px;
+        height: 22px;
+        margin-left: 8px;
+        border-radius: 3px;
+        object-fit: cover;
     }
     </style>
-    """, unsafe_allow_html=True)
+    <div class="timing-tower">
+    """
     
-    html_rows = []
     for _, row in leaderboard_df.iterrows():
         driver = row['Driver']
+        pos = row['Position']
         team_color = driver_colors_map.get(driver, ('#888888', 'Unknown'))[0]
         compound = row.get('Compound', 'MEDIUM')
-        tyre_info = TYRE_COMPOUNDS.get(compound, TYRE_COMPOUNDS['MEDIUM'])
-        tyre_life = row.get('TyreLife', 0)
+        tyre_img = tyre_img_map.get(compound, 'images/Medium.jpg')
         
-        pos = row['Position']
+        # Position badge colors
         if pos == 1:
-            pos_bg, pos_color = '#FFD700', '#000'
+            pos_style = 'background:#ffd700;color:#000;'
         elif pos == 2:
-            pos_bg, pos_color = '#C0C0C0', '#000'
+            pos_style = 'background:#c0c0c0;color:#000;'
         elif pos == 3:
-            pos_bg, pos_color = '#CD7F32', '#000'
+            pos_style = 'background:#cd7f32;color:#000;'
         else:
-            pos_bg, pos_color = 'rgba(255,255,255,0.15)', '#fff'
+            pos_style = 'background:rgba(100,100,100,0.4);color:#fff;'
         
-        s1_class = 'sector-purple' if row.get('S1_best', False) else 'sector-normal'
-        s2_class = 'sector-purple' if row.get('S2_best', False) else 'sector-normal'
-        s3_class = 'sector-purple' if row.get('S3_best', False) else 'sector-normal'
+        # Sector classes
+        s1_class = 'best' if row.get('S1_best', False) else ''
+        s2_class = 'best' if row.get('S2_best', False) else ''
+        s3_class = 'best' if row.get('S3_best', False) else ''
         
-        html_rows.append(f"""
-        <div class="timing-row">
-            <div class="pos-badge" style="background:{pos_bg};color:{pos_color};">{pos}</div>
-            <div class="team-bar" style="background:{team_color};"></div>
-            <span class="driver-name">{driver}</span>
-            <span class="sector-box {s1_class}">{row['S1']}</span>
-            <span class="sector-box {s2_class}">{row['S2']}</span>
-            <span class="sector-box {s3_class}">{row['S3']}</span>
-            <span class="lap-time">{row['BestLapStr']}</span>
-            <span class="gap-time">{row['Gap']}</span>
-            <div class="tyre-indicator" style="background:{tyre_info['color']};" title="{compound} - {tyre_life} laps old">{tyre_info['short']}</div>
+        html_content += f"""
+        <div class="timing-row" style="border-left-color:{team_color};">
+            <div class="pos-badge" style="{pos_style}">{pos}</div>
+            <span class="driver-abbr">{driver}</span>
+            <span class="sector-time {s1_class}">{row['S1']}</span>
+            <span class="sector-time {s2_class}">{row['S2']}</span>
+            <span class="sector-time {s3_class}">{row['S3']}</span>
+            <span class="laptime">{row['BestLapStr']}</span>
+            <span class="gap">{row['Gap']}</span>
+            <img src="{tyre_img}" class="tyre-img" alt="{compound}" />
         </div>
-        """)
+        """
     
-    st.markdown(f'<div class="timing-tower">{"".join(html_rows)}</div>', unsafe_allow_html=True)
+    html_content += "</div>"
+    
+    # Use components.html for better HTML rendering
+    import streamlit.components.v1 as components
+    components.html(html_content, height=600, scrolling=True)
 
 # ─────────────────────────────────────────────────────────────────
 # MAIN APPLICATION
@@ -443,21 +435,13 @@ with st.sidebar:
     st.markdown("### 🏁 Legend")
     
     st.markdown("**Tyres:**")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("🔴 Soft")
-        st.markdown("🟡 Medium")
-        st.markdown("⚪ Hard")
-    with col2:
-        st.markdown("🟢 Inter")
-        st.markdown("🔵 Wet")
+    # Display tyre images in sidebar
+    for compound, img_file in [("Soft", "Soft.jpg"), ("Medium", "Medium.jpg"), ("Hard", "Hard.jpg")]:
+        st.image(f"images/{img_file}", width=40, caption=compound)
     
     st.markdown("**Sectors:**")
-    st.markdown(f"<span style='color:{SECTOR_COLORS['S1']}'>▰▰</span> S1 | "
-                f"<span style='color:{SECTOR_COLORS['S2']}'>▰▰</span> S2 | "
-                f"<span style='color:{SECTOR_COLORS['S3']}'>▰▰</span> S3", 
-                unsafe_allow_html=True)
-    st.markdown("🟣 = Fastest sector")
+    st.markdown("S1 / S2 / S3")
+    st.markdown("🟣 = Best sector time")
 
 # Load track data
 track_df, corners_df = load_track_data(year, gp_name)
@@ -497,7 +481,7 @@ tab1, tab2, tab3 = st.tabs(["🏁 Race Animation", "📊 Lap Analysis", "⏱️ 
 # TAB 1: RACE ANIMATION
 # ─────────────────────────────────────────────────────────────────
 with tab1:
-    col_track, col_timing = st.columns([2, 1])
+    col_track, col_timing = st.columns([75, 25])  # 75/25 split for bigger track
     
     with col_track:
         st.markdown("### Live Animation")
@@ -515,18 +499,6 @@ with tab1:
         fig.add_trace(go.Scatter(
             x=track_df['x'], y=track_df['y'], mode='lines',
             line=dict(color='#888888', width=6), hoverinfo='none', showlegend=False
-        ))
-        
-        # Add sector markers/labels
-        s1_point = track_df[track_df['distance'] <= s1_end].iloc[-1]
-        s2_point = track_df[(track_df['distance'] > s1_end) & (track_df['distance'] <= s2_end)].iloc[-1]
-        
-        fig.add_trace(go.Scatter(
-            x=[s1_point['x'], s2_point['x']], y=[s1_point['y'], s2_point['y']],
-            mode='text', text=['S1', 'S2'],
-            textfont=dict(size=14, color='white', family='Arial Black'),
-            textposition='middle center',
-            hoverinfo='none', showlegend=False
         ))
         
         # Corner labels
@@ -569,31 +541,35 @@ with tab1:
         
         fig.frames = frames
         
-        pad = 80
+        pad = 100
         fig.update_layout(
-            height=650,
+            height=850,
             plot_bgcolor='rgba(15,15,25,1)',
             paper_bgcolor='rgba(15,15,25,1)',
             xaxis=dict(range=[track_df['x'].min()-pad, track_df['x'].max()+pad], visible=False, fixedrange=True),
             yaxis=dict(range=[track_df['y'].min()-pad, track_df['y'].max()+pad], visible=False, fixedrange=True, scaleanchor='x'),
-            margin=dict(l=0, r=0, t=30, b=0),
+            margin=dict(l=20, r=0, t=40, b=20),
             updatemenus=[dict(
-                type='buttons', direction='right', x=0.0, y=1.08,
+                type='buttons', direction='left', x=0.02, y=1.02, xanchor='left', yanchor='bottom',
                 buttons=[
                     dict(label='▶ Play', method='animate', 
                          args=[None, dict(frame=dict(duration=int(1000*dt), redraw=False), 
                                          transition=dict(duration=0), fromcurrent=True)]),
-                    dict(label='⏩ 2x', method='animate', 
+                    dict(label='2x', method='animate', 
                          args=[None, dict(frame=dict(duration=int(1000*dt/2), redraw=False), 
                                          transition=dict(duration=0), fromcurrent=True)]),
-                    dict(label='⏭ 4x', method='animate', 
+                    dict(label='4x', method='animate', 
                          args=[None, dict(frame=dict(duration=int(1000*dt/4)+1, redraw=False), 
                                          transition=dict(duration=0), fromcurrent=True)]),
                     dict(label='⏸ Pause', method='animate', 
                          args=[[None], dict(frame=dict(duration=0, redraw=False), 
                                            mode='immediate', transition=dict(duration=0))])
                 ],
-                bgcolor='rgba(50,50,70,0.8)', font=dict(color='white')
+                bgcolor='rgba(20,20,30,0.9)', 
+                font=dict(color='white', size=11),
+                bordercolor='rgba(100,100,120,0.5)',
+                borderwidth=1,
+                pad=dict(t=5, b=5, l=8, r=8)
             )]
         )
         
@@ -655,16 +631,6 @@ with tab2:
         fig_lap.add_trace(go.Scatter(
             x=track_df['x'], y=track_df['y'], mode='lines',
             line=dict(color='#888888', width=5), hoverinfo='none', showlegend=False
-        ), row=1, col=1)
-        
-        # Sector labels
-        s1_point = track_df[track_df['distance'] <= s1_end].iloc[-1]
-        s2_point = track_df[(track_df['distance'] > s1_end) & (track_df['distance'] <= s2_end)].iloc[-1]
-        fig_lap.add_trace(go.Scatter(
-            x=[s1_point['x'], s2_point['x']], y=[s1_point['y'], s2_point['y']],
-            mode='text', text=['S1', 'S2'],
-            textfont=dict(size=12, color='white', family='Arial Black'),
-            hoverinfo='none', showlegend=False
         ), row=1, col=1)
         
         # Corner labels
@@ -756,19 +722,23 @@ with tab2:
             legend=dict(orientation='h', x=0, y=-0.02, font=dict(color='white')),
             margin=dict(l=50, r=20, t=30, b=40),
             updatemenus=[dict(
-                type='buttons', direction='right', x=0.0, y=1.02,
+                type='buttons', direction='left', x=0.02, y=1.02, xanchor='left', yanchor='bottom',
                 buttons=[
                     dict(label='▶ Play', method='animate', 
                          args=[None, dict(frame=dict(duration=int(1000*dt), redraw=True), 
                                          transition=dict(duration=0), fromcurrent=True)]),
-                    dict(label='⏩ 2x', method='animate', 
+                    dict(label='2x', method='animate', 
                          args=[None, dict(frame=dict(duration=int(1000*dt/2), redraw=True), 
                                          transition=dict(duration=0), fromcurrent=True)]),
                     dict(label='⏸ Pause', method='animate', 
                          args=[[None], dict(frame=dict(duration=0, redraw=False), 
                                            mode='immediate', transition=dict(duration=0))])
                 ],
-                bgcolor='rgba(50,50,70,0.8)', font=dict(color='white')
+                bgcolor='rgba(20,20,30,0.9)', 
+                font=dict(color='white', size=11),
+                bordercolor='rgba(100,100,120,0.5)',
+                borderwidth=1,
+                pad=dict(t=5, b=5, l=8, r=8)
             )]
         )
         
@@ -777,29 +747,31 @@ with tab2:
         
         st.plotly_chart(fig_lap, use_container_width=True)
         
-        # Summary stats
+        # Summary stats with tyre images
         st.markdown("#### Summary Statistics")
-        stats_rows = []
         for drv in selected_drivers:
             tel = driver_tel[drv]
             row_data = leaderboard_df[leaderboard_df['Driver'] == drv]
             if not row_data.empty:
                 row_data = row_data.iloc[0]
                 compound = row_data.get('Compound', 'MEDIUM')
-                tyre_info = TYRE_COMPOUNDS.get(compound, TYRE_COMPOUNDS['MEDIUM'])
-                stats_rows.append({
-                    'Driver': drv,
-                    'Team': driver_colors_map[drv][1],
-                    'Lap Time': row_data['BestLapStr'],
-                    'S1': row_data['S1'],
-                    'S2': row_data['S2'],
-                    'S3': row_data['S3'],
-                    'Tyre': f"{tyre_info['symbol']} {compound}",
-                    'Max Speed': f"{tel['Speed'].max():.0f} km/h"
-                })
-        
-        if stats_rows:
-            st.dataframe(pd.DataFrame(stats_rows), use_container_width=True, hide_index=True)
+                tyre_img_map = {
+                    'SOFT': 'images/Soft.jpg',
+                    'MEDIUM': 'images/Medium.jpg',
+                    'HARD': 'images/Hard.jpg',
+                    'INTERMEDIATE': 'images/Intermediate.jpg',
+                    'WET': 'images/Wet.jpg'
+                }
+                tyre_img = tyre_img_map.get(compound, 'images/Medium.jpg')
+                
+                col_img, col_stats = st.columns([1, 4])
+                with col_img:
+                    st.image(tyre_img, width=50)
+                with col_stats:
+                    st.markdown(f"**{drv}** - {driver_colors_map[drv][1]}")
+                    st.text(f"Lap: {row_data['BestLapStr']} | S1: {row_data['S1']} | S2: {row_data['S2']} | S3: {row_data['S3']}")
+                    st.text(f"Max Speed: {tel['Speed'].max():.0f} km/h")
+                st.markdown("---")
 
 # ─────────────────────────────────────────────────────────────────
 # TAB 3: TIME DELTA
@@ -834,16 +806,6 @@ with tab3:
         fig_delta.add_trace(go.Scatter(
             x=track_df['x'], y=track_df['y'], mode='lines',
             line=dict(color='#888888', width=4), hoverinfo='none', showlegend=False
-        ), row=1, col=1)
-        
-        # Sector labels
-        s1_point = track_df[track_df['distance'] <= s1_end].iloc[-1]
-        s2_point = track_df[(track_df['distance'] > s1_end) & (track_df['distance'] <= s2_end)].iloc[-1]
-        fig_delta.add_trace(go.Scatter(
-            x=[s1_point['x'], s2_point['x']], y=[s1_point['y'], s2_point['y']],
-            mode='text', text=['S1', 'S2'],
-            textfont=dict(size=12, color='white', family='Arial Black'),
-            hoverinfo='none', showlegend=False
         ), row=1, col=1)
         
         # Row 2: Time Delta graph with fill
