@@ -26,13 +26,40 @@ export interface DriverRow {
   position: number;
   gap: string;
   color: string;
+  status?: string; // 'Finished' | 'Lapped' | 'Retired'
+}
+
+export interface LapHistoryEntry {
+  lap: number;
+  position: number;
+  trel: number;
+  lapTime: number;
+  lapTimeStr: string;
+  compound: string;
+  tyreLife: number;
+  S1: string;
+  S2: string;
+  S3: string;
+  pitInTrel: number | null;
+  pitOutTrel: number | null;
+}
+
+export interface TrackStatusEvent {
+  trel: number;
+  endTrel: number;
+  status: string; // 'AllClear' | 'Yellow' | 'SCDeploying' | 'SafetyCar' | 'RedFlag' | 'VSCDeployed' | 'VSCEnding'
+  code: string;
 }
 
 export interface SessionData {
   leaderboard: DriverRow[];
-  telemetry: Record<string, { Distance: number[]; Trel: number[]; Speed?: number[]; Throttle?: number[]; Brake?: number[]; RPM?: number[]; nGear?: number[]; DRS?: number[] }>;
+  telemetry: Record<string, { Distance: number[]; Trel: number[]; Speed?: number[]; X?: number[]; Y?: number[]; Throttle?: number[]; Brake?: number[]; RPM?: number[]; nGear?: number[]; DRS?: number[]; maxTrel?: number }>;
   driverColors: Record<string, { color: string; team: string }>;
   maxDuration: number;
+  isRace?: boolean;
+  totalLaps?: number;
+  lapHistory?: Record<string, LapHistoryEntry[]>;
+  trackStatusEvents?: TrackStatusEvent[];
 }
 
 export interface TimeDeltaData {

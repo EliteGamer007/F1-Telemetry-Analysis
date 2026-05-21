@@ -144,14 +144,46 @@ def _format_sector(s):
     except:
         return 'N/A'
 
+def _format_laptime(lt) -> str:
+    """Format a timedelta into m:ss.mmm string."""
+    try:
+        if pd.isna(lt):
+            return 'N/A'
+        total_sec = lt.total_seconds()
+        mins = int(total_sec // 60)
+        secs = total_sec % 60
+        return f"{mins}:{secs:06.3f}"
+    except:
+        return 'N/A'
+
 def _build_session_data(year: int, gp_name: str, session_code: str, qual_session: Optional[str]):
     session = fastf1.get_session(year, gp_name, session_code)
     session.load(weather=False, messages=False)
 
-    # Driver color map
+    is_race = (session_code == 'R')
+    total_laps = session.total_laps if is_race else None
+    lap_history = {} if is_race else None
+
+    # ── Driver retired/status from session results ──────────────
+    driver_status: Dict[str, str] = {}       # abbr -> 'Finished' | 'Lapped' | 'Retired'
+    driver_finish_pos: Dict[str, int] = {}   # abbr -> official finishing position
+    if is_race:
+        try:
+            results = session.results
+            for _, row in results.iterrows():
+                abbr = row.get('Abbreviation', '')
+                status = row.get('Status', 'Finished')
+                pos = row.get('Position', None)
+                driver_status[abbr] = str(status)
+                if abbr and pos is not None and pd.notna(pos):
+                    driver_finish_pos[abbr] = int(pos)
+        except Exception:
+            pass
+
+    # ── Driver color map ────────────────────────────────────────
     driver_colors_map = {}
-    laps = session.laps
-    drivers_all = sorted(laps['Driver'].dropna().unique())
+    laps_all = session.laps
+    drivers_all = sorted(laps_all['Driver'].dropna().unique())
     team_drivers: Dict[str, list] = {}
     for drv in drivers_all:
         try:
@@ -166,7 +198,8 @@ def _build_session_data(year: int, gp_name: str, session_code: str, qual_session
             col = primary if i == 0 else lighten_color(primary, 0.45)
             driver_colors_map[drv] = {'color': col, 'team': team, 'teamColor': primary}
 
-    # Q split
+    # ── Q split ─────────────────────────────────────────────────
+    laps = laps_all.copy()
     if qual_session and session_code == 'Q':
         try:
             q_splits = laps.split_qualifying_sessions()
@@ -176,57 +209,166 @@ def _build_session_data(year: int, gp_name: str, session_code: str, qual_session
         except:
             pass
 
-    laps = laps[laps['IsAccurate'] == True]
+    if not is_race:
+        laps = laps[laps['IsAccurate'] == True]
+
+    # ── Global race start time (t0) ─────────────────────────────
+    # t0 = the SessionTime at which lights-out happened.
+    # We derive it from: lap1_end_time - lap1_laptime for all drivers, take the min.
+    t0 = pd.NaT
+    if is_race and not laps_all.empty:
+        first_laps = laps_all[laps_all['LapNumber'] == 1]
+        if not first_laps.empty:
+            computed_starts = first_laps['Time'] - first_laps['LapTime']
+            t0 = computed_starts.dropna().min()
+        if pd.isna(t0):
+            t0 = laps_all['Time'].dropna().min()
+
+    # ── Get circuit rotation (same as used to build track layout) ─
+    track_angle = 0.0
+    try:
+        circuit_info = session.get_circuit_info()
+        track_angle = float(circuit_info.rotation) / 180.0 * np.pi
+    except Exception:
+        track_angle = 0.0
 
     drivers = sorted(laps['Driver'].dropna().unique())
     lap_times = []
     driver_tel = {}
 
+
     for drv in drivers:
         try:
-            drv_laps = laps.pick_driver(drv)
+            drv_laps = laps.pick_drivers(drv)
             if drv_laps.empty:
                 continue
             info = session.get_driver(drv)
             team = info.get('TeamName', 'Unknown')
+            abbr = info.get('Abbreviation', str(drv))
             best_lap = drv_laps.pick_fastest()
-            if best_lap is None or pd.isna(best_lap['LapTime']):
+            if best_lap is None or pd.isna(best_lap.get('LapTime')):
                 continue
-            tel = best_lap.get_telemetry()
+
+            if is_race:
+                # ── Fetch full race telemetry ───────────────────
+                tel = drv_laps.get_telemetry()
+
+                # ── Build per-lap history ───────────────────────
+                # Each entry: when this lap ENDED (trel), what position/compound/tyrelife
+                history = []
+                for _, lap_row in drv_laps.iterrows():
+                    lap_end_time = lap_row.get('Time')
+                    if pd.isna(lap_end_time) or pd.isna(t0):
+                        continue
+                    rel_time = (lap_end_time - t0).total_seconds()
+
+                    # Pit-in trel: if this lap has a PitInTime, car enters pit at that moment
+                    pit_in_trel = None
+                    pit_out_trel = None
+                    if pd.notna(lap_row.get('PitInTime')):
+                        pit_in_trel = (lap_row['PitInTime'] - t0).total_seconds()
+                    if pd.notna(lap_row.get('PitOutTime')):
+                        pit_out_trel = (lap_row['PitOutTime'] - t0).total_seconds()
+
+                    l_laptime = lap_row.get('LapTime')
+                    l_laptime_sec = l_laptime.total_seconds() if pd.notna(l_laptime) else 0
+                    s1 = lap_row.get('Sector1Time', pd.NaT)
+                    s2 = lap_row.get('Sector2Time', pd.NaT)
+                    s3 = lap_row.get('Sector3Time', pd.NaT)
+
+                    history.append({
+                        'lap': int(lap_row.get('LapNumber', 0)),
+                        'position': int(lap_row.get('Position', 0)) if pd.notna(lap_row.get('Position')) else 0,
+                        'trel': rel_time,
+                        'lapTime': l_laptime_sec,
+                        'lapTimeStr': _format_laptime(l_laptime),
+                        'compound': str(lap_row.get('Compound', 'UNKNOWN')).upper(),
+                        'tyreLife': int(lap_row.get('TyreLife', 0)) if pd.notna(lap_row.get('TyreLife')) else 0,
+                        'S1': _format_sector(s1),
+                        'S2': _format_sector(s2),
+                        'S3': _format_sector(s3),
+                        'pitInTrel': pit_in_trel,
+                        'pitOutTrel': pit_out_trel,
+                    })
+
+                # Sort by lap number ascending
+                history.sort(key=lambda h: h['lap'])
+                lap_history[abbr] = history
+            else:
+                tel = best_lap.get_telemetry()
+
             if tel.empty:
                 continue
 
-            t0 = tel['Time'].iloc[0]
-            tel = tel.copy()
-            tel['Trel'] = (tel['Time'] - t0).dt.total_seconds()
+            # ── Compute Trel ────────────────────────────────────
+            if is_race and pd.notna(t0):
+                drv_t0 = t0
+                if 'SessionTime' in tel.columns:
+                    tel = tel.copy()
+                    tel['Trel'] = (tel['SessionTime'] - drv_t0).dt.total_seconds()
+                else:
+                    tel = tel.copy()
+                    tel['Trel'] = (tel['Time'] - drv_t0).dt.total_seconds()
+            else:
+                drv_t0 = tel['SessionTime'].iloc[0] if 'SessionTime' in tel.columns else tel['Time'].iloc[0]
+                tel = tel.copy()
+                if 'SessionTime' in tel.columns:
+                    tel['Trel'] = (tel['SessionTime'] - drv_t0).dt.total_seconds()
+                else:
+                    tel['Trel'] = (tel['Time'] - drv_t0).dt.total_seconds()
+
             tel['Distance'] = tel['Distance'].astype(float)
 
-            # Downsample for performance - take every 3rd point
-            tel = tel.iloc[::3].reset_index(drop=True)
+            # Compute last valid trel (for retired drivers — freeze dot beyond this)
+            # A driver is truly finished when Speed drops to 0 permanently
+            # Find the last index where speed > 5
+            if is_race and 'Speed' in tel.columns:
+                active_mask = tel['Speed'] > 5
+                if active_mask.any():
+                    last_active_idx = active_mask.values[::-1].argmax()
+                    last_active_idx = len(tel) - 1 - last_active_idx
+                    max_trel = float(tel['Trel'].iloc[last_active_idx])
+                else:
+                    max_trel = float(tel['Trel'].iloc[-1])
+            else:
+                max_trel = float(tel['Trel'].iloc[-1])
 
-            cols = ['Distance', 'Speed', 'Trel', 'Throttle', 'Brake', 'RPM', 'nGear', 'DRS']
+            # Downsample for performance
+            step = max(1, len(tel) // 3000) if is_race else 3
+            tel = tel.iloc[::step].reset_index(drop=True)
+
+            if 'X' in tel.columns and 'Y' in tel.columns:
+                # Rotate X/Y to match the track outline rotation
+                coords = tel[['X', 'Y']].to_numpy()
+                rotated_coords = rotate(coords, angle=track_angle)
+                tel['X'] = rotated_coords[:, 0]
+                tel['Y'] = rotated_coords[:, 1]
+
+            cols = ['Distance', 'Speed', 'Trel', 'Throttle', 'Brake', 'RPM', 'nGear', 'DRS', 'X', 'Y']
             available = [c for c in cols if c in tel.columns]
             tel_dict = tel[available].fillna(0).to_dict(orient='list')
-            driver_tel[drv] = tel_dict
+            tel_dict['maxTrel'] = max_trel
+            driver_tel[abbr] = tel_dict
 
+            # ── Leaderboard row (fastest lap data for qualifying; last lap for race) ──
             compound = best_lap.get('Compound', 'MEDIUM')
             tyre_life = best_lap.get('TyreLife', 0)
             s1 = best_lap.get('Sector1Time', pd.NaT)
             s2 = best_lap.get('Sector2Time', pd.NaT)
             s3 = best_lap.get('Sector3Time', pd.NaT)
 
-            lt = best_lap['LapTime']
+            lt = best_lap.get('LapTime')
             if pd.notna(lt):
                 total_sec = lt.total_seconds()
-                mins = int(total_sec // 60)
-                secs = total_sec % 60
-                lap_str = f"{mins}:{secs:06.3f}"
+                lap_str = _format_laptime(lt)
             else:
                 lap_str = 'N/A'
                 total_sec = float('inf')
 
+            status = driver_status.get(abbr, 'Finished')
+
             lap_times.append({
-                'driver': drv,
+                'driver': abbr,
                 'team': team,
                 'lapTime': total_sec,
                 'bestLapStr': lap_str,
@@ -238,21 +380,35 @@ def _build_session_data(year: int, gp_name: str, session_code: str, qual_session
                 'S1_sec': s1.total_seconds() if pd.notna(s1) else 9999,
                 'S2_sec': s2.total_seconds() if pd.notna(s2) else 9999,
                 'S3_sec': s3.total_seconds() if pd.notna(s3) else 9999,
-                'color': driver_colors_map.get(drv, {}).get('color', '#888888'),
+                'color': driver_colors_map.get(abbr, {}).get('color', '#888888'),
+                'status': status,  # 'Finished' | 'Lapped' | 'Retired'
             })
 
-            if drv not in driver_colors_map:
-                driver_colors_map[drv] = {'color': '#888888', 'team': team}
+            if abbr not in driver_colors_map:
+                driver_colors_map[abbr] = {'color': '#888888', 'team': team}
 
         except Exception:
             continue
 
-    lap_times.sort(key=lambda x: x['lapTime'])
-    leader_time = lap_times[0]['lapTime'] if lap_times else 0
-
-    for i, row in enumerate(lap_times):
-        row['position'] = i + 1
-        row['gap'] = '' if i == 0 else f"+{row['lapTime'] - leader_time:.3f}"
+    if is_race and driver_finish_pos:
+        # Sort by official finishing position from session.results
+        lap_times.sort(key=lambda x: driver_finish_pos.get(x['driver'], 999))
+        for i, row in enumerate(lap_times):
+            finish_pos = driver_finish_pos.get(row['driver'], i + 1)
+            row['position'] = finish_pos
+            if i == 0:
+                row['gap'] = ''
+            elif row.get('status') == 'Retired':
+                row['gap'] = 'DNF'
+            else:
+                row['gap'] = f"+{i}"  # placeholder; dynamic gap comes from lap history
+    else:
+        # Qualifying: sort by fastest lap time
+        lap_times.sort(key=lambda x: x['lapTime'])
+        leader_time = lap_times[0]['lapTime'] if lap_times else 0
+        for i, row in enumerate(lap_times):
+            row['position'] = i + 1
+            row['gap'] = '' if i == 0 else f"+{row['lapTime'] - leader_time:.3f}"
 
     # Best sectors
     if lap_times:
@@ -266,7 +422,34 @@ def _build_session_data(year: int, gp_name: str, session_code: str, qual_session
 
     max_duration = max((max(t['Trel']) for t in driver_tel.values() if t.get('Trel')), default=0.0)
 
-    return lap_times, driver_tel, driver_colors_map, max_duration
+    # ── Track status events (SC, VSC, Yellow, Red flag) ─────────
+    track_status_events = []
+    if is_race and pd.notna(t0):
+        try:
+            ts_df = session.track_status
+            # Status codes: 1=AllClear, 2=Yellow, 3=SCDeploying, 4=SafetyCar, 5=RedFlag, 6=VSCDeployed, 7=VSCEnding
+            STATUS_MAP = {
+                '1': 'AllClear', '2': 'Yellow', '3': 'SCDeploying',
+                '4': 'SafetyCar', '5': 'RedFlag', '6': 'VSCDeployed', '7': 'VSCEnding'
+            }
+            for idx, row in ts_df.iterrows():
+                trel = (row['Time'] - t0).total_seconds()
+                status_code = str(row.get('Status', '1'))
+                # End time = start of next event
+                if idx + 1 < len(ts_df):
+                    end_trel = (ts_df.iloc[idx + 1]['Time'] - t0).total_seconds()
+                else:
+                    end_trel = max_duration
+                track_status_events.append({
+                    'trel': trel,
+                    'endTrel': end_trel,
+                    'status': STATUS_MAP.get(status_code, 'Unknown'),
+                    'code': status_code,
+                })
+        except Exception:
+            pass
+
+    return lap_times, driver_tel, driver_colors_map, max_duration, is_race, total_laps, lap_history, track_status_events
 
 # ─────────────────────────────────────────────────────────────────
 # ROUTES
@@ -306,7 +489,7 @@ def get_track(year: int, gp: str, session_code: str = 'Q'):
 @app.get("/api/session")
 def get_session_data(year: int, gp: str, session_code: str = 'Q', qual_session: Optional[str] = None):
     try:
-        lap_times, driver_tel, driver_colors_map, max_duration = _build_session_data(
+        lap_times, driver_tel, driver_colors_map, max_duration, is_race, total_laps, lap_history, track_status_events = _build_session_data(
             year, gp, session_code, qual_session
         )
         return {
@@ -314,6 +497,10 @@ def get_session_data(year: int, gp: str, session_code: str = 'Q', qual_session: 
             "telemetry": driver_tel,
             "driverColors": driver_colors_map,
             "maxDuration": max_duration,
+            "isRace": is_race,
+            "totalLaps": total_laps,
+            "lapHistory": lap_history,
+            "trackStatusEvents": track_status_events,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -321,7 +508,7 @@ def get_session_data(year: int, gp: str, session_code: str = 'Q', qual_session: 
 @app.get("/api/time-delta")
 def get_time_delta(year: int, gp: str, session_code: str, qual_session: Optional[str], driver1: str, driver2: str):
     try:
-        lap_times, driver_tel, _, _ = _build_session_data(year, gp, session_code, qual_session)
+        lap_times, driver_tel, _, _, _, _, _, _ = _build_session_data(year, gp, session_code, qual_session)
         if driver1 not in driver_tel or driver2 not in driver_tel:
             raise HTTPException(status_code=404, detail="Driver telemetry not found")
 

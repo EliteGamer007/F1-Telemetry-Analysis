@@ -1,14 +1,26 @@
 'use client';
 
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { TrackData, SessionData } from '@/lib/api';
+import { TrackData, SessionData, TrackStatusEvent } from '@/lib/api';
 
 interface TrackMapProps {
   trackData: TrackData;
   sessionData: SessionData;
+  onTimeUpdate?: (time: number) => void;
 }
 
-export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
+// Track status styling
+const STATUS_STYLE: Record<string, { color: string; label: string; bg: string }> = {
+  AllClear:    { color: '#22c55e', label: 'GREEN', bg: 'bg-green-500/20 border-green-500/40 text-green-400' },
+  Yellow:      { color: '#facc15', label: 'YELLOW', bg: 'bg-yellow-500/20 border-yellow-500/40 text-yellow-300' },
+  SCDeploying: { color: '#f97316', label: 'SC DEPLOYING', bg: 'bg-orange-500/20 border-orange-500/40 text-orange-300' },
+  SafetyCar:   { color: '#f97316', label: 'SAFETY CAR', bg: 'bg-orange-500/20 border-orange-500/40 text-orange-300' },
+  RedFlag:     { color: '#ef4444', label: 'RED FLAG', bg: 'bg-red-500/20 border-red-500/40 text-red-400' },
+  VSCDeployed: { color: '#a78bfa', label: 'VSC', bg: 'bg-purple-500/20 border-purple-500/40 text-purple-300' },
+  VSCEnding:   { color: '#c4b5fd', label: 'VSC ENDING', bg: 'bg-purple-400/20 border-purple-400/40 text-purple-200' },
+};
+
+export default function TrackMap({ trackData, sessionData, onTimeUpdate }: TrackMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
@@ -21,24 +33,41 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
   const isPanning = useRef(false);
   const lastPan = useRef({ x: 0, y: 0 });
   const dprRef = useRef(1);
+  const lastReportedTime = useRef<number>(-1);
 
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [currentTime, setCurrentTime] = useState(0);
   const [zoom, setZoom] = useState(1);
+  const [currentLap, setCurrentLap] = useState(1);
+  const [currentFlag, setCurrentFlag] = useState<TrackStatusEvent | null>(null);
 
   const maxDuration = sessionData.maxDuration;
   const { track, corners, bounds } = trackData;
   const drivers = sessionData.leaderboard;
   const telemetry = sessionData.telemetry;
+  const trackStatusEvents = sessionData.trackStatusEvents ?? [];
 
-  // Pre-build sorted telemetry arrays once
+  // Pre-build sorted telemetry arrays once — prefer X/Y for smooth positioning
   const driverTelArrays = React.useMemo(() => {
-    const result: Record<string, { distances: Float64Array; trels: Float64Array }> = {};
+    const result: Record<string, {
+      distances: Float64Array;
+      trels: Float64Array;
+      xs: Float64Array | null;
+      ys: Float64Array | null;
+      maxTrel: number;
+      hasXY: boolean;
+    }> = {};
     for (const drv of Object.keys(telemetry)) {
+      const t = telemetry[drv];
+      const hasXY = Array.isArray(t.X) && t.X.length > 0 && Array.isArray(t.Y) && t.Y.length > 0;
       result[drv] = {
-        distances: new Float64Array(telemetry[drv].Distance),
-        trels: new Float64Array(telemetry[drv].Trel),
+        distances: new Float64Array(t.Distance),
+        trels: new Float64Array(t.Trel),
+        xs: hasXY ? new Float64Array(t.X!) : null,
+        ys: hasXY ? new Float64Array(t.Y!) : null,
+        maxTrel: typeof t.maxTrel === 'number' ? t.maxTrel : Infinity,
+        hasXY,
       };
     }
     return result;
@@ -60,11 +89,11 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
     if (x >= xArr[n - 1]) return yArr[n - 1];
     let lo = 0, hi = n - 1;
     while (lo < hi - 1) { const mid = (lo + hi) >> 1; if (xArr[mid] <= x) lo = mid; else hi = mid; }
-    const t = (x - xArr[lo]) / (xArr[hi] - xArr[lo]);
-    return yArr[lo] + t * (yArr[hi] - yArr[lo]);
+    const frac = (x - xArr[lo]) / (xArr[hi] - xArr[lo]);
+    return yArr[lo] + frac * (yArr[hi] - yArr[lo]);
   }, []);
 
-  // Map normalised track coords → canvas pixels (accounts for DPR)
+  // Map raw track coords → canvas pixels
   const toCanvas = useCallback((W: number, H: number, tx: number, ty: number) => {
     const sc = zoomRef.current;
     const { x: px, y: py } = panRef.current;
@@ -78,7 +107,17 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
     };
   }, [bounds]);
 
-  // ── HiDPI canvas resize ────────────────────────────────────────
+  // Get current track status at a given time
+  const getStatusAt = useCallback((t: number): TrackStatusEvent | null => {
+    let current: TrackStatusEvent | null = null;
+    for (const ev of trackStatusEvents) {
+      if (ev.trel <= t) current = ev;
+      else break;
+    }
+    return current;
+  }, [trackStatusEvents]);
+
+  // HiDPI canvas resize
   const resizeCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
@@ -94,7 +133,7 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
     if (ctx) ctx.scale(dpr, dpr);
   }, []);
 
-  // ── DRAW ──────────────────────────────────────────────────────
+  // DRAW
   const draw = useCallback((t: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -102,25 +141,50 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
     if (!ctx) return;
     const dpr = dprRef.current;
     const W = canvas.width / dpr;
-    const W2 = canvas.height / dpr;
+    const H = canvas.height / dpr;
 
     ctx.save();
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // reset to logical pixels
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Background
     ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, W, W2);
+    ctx.fillRect(0, 0, W, H);
 
-    const map = (tx: number, ty: number) => toCanvas(W, W2, tx, ty);
+    const map = (tx: number, ty: number) => toCanvas(W, H, tx, ty);
 
-    // ── Track surface (wide dark gray filled band) ──────────────
+    // Current flag status
+    const flagStatus = getStatusAt(t);
+    const isSC = flagStatus?.status === 'SafetyCar' || flagStatus?.status === 'SCDeploying';
+    const isVSC = flagStatus?.status === 'VSCDeployed' || flagStatus?.status === 'VSCEnding';
+    const isRed = flagStatus?.status === 'RedFlag';
+    const isYellow = flagStatus?.status === 'Yellow';
+
+    // Track glow color based on flag
+    const trackGlow = isRed ? '#ef444430' : isSC || isVSC ? '#f9731630' : isYellow ? '#facc1520' : null;
+
+    // ── Track surface ──────────────────────────────────────────
     if (track.x.length > 1) {
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
 
-      // Outer band (dark base)
-      ctx.beginPath();
       const p0 = map(track.x[0], track.y[0]);
+
+      // Optional flag glow ring
+      if (trackGlow) {
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        for (let i = 1; i < track.x.length; i++) {
+          const p = map(track.x[i], track.y[i]);
+          ctx.lineTo(p.x, p.y);
+        }
+        ctx.closePath();
+        ctx.strokeStyle = trackGlow;
+        ctx.lineWidth = 32;
+        ctx.stroke();
+      }
+
+      // Outer band
+      ctx.beginPath();
       ctx.moveTo(p0.x, p0.y);
       for (let i = 1; i < track.x.length; i++) {
         const p = map(track.x[i], track.y[i]);
@@ -139,11 +203,11 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
         ctx.lineTo(p.x, p.y);
       }
       ctx.closePath();
-      ctx.strokeStyle = '#2e2e2e';
+      ctx.strokeStyle = isSC ? '#2a2000' : isVSC ? '#1a0a2a' : isRed ? '#2a0000' : '#2e2e2e';
       ctx.lineWidth = 16;
       ctx.stroke();
 
-      // Inner surface — slightly lighter
+      // Inner surface
       ctx.beginPath();
       ctx.moveTo(p0.x, p0.y);
       for (let i = 1; i < track.x.length; i++) {
@@ -155,7 +219,7 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
       ctx.lineWidth = 10;
       ctx.stroke();
 
-      // White centre line dashes
+      // Centre line dashes
       ctx.save();
       ctx.setLineDash([8, 10]);
       ctx.beginPath();
@@ -171,7 +235,7 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
       ctx.restore();
     }
 
-    // ── Corner labels ───────────────────────────────────────────
+    // ── Corner labels ────────────────────────────────────────
     for (const corner of corners) {
       const lp = map(corner.label_x, corner.label_y);
       ctx.font = `bold ${Math.round(9 * zoomRef.current)}px Inter, sans-serif`;
@@ -181,49 +245,66 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
       ctx.fillText(`${corner.Number}${corner.Letter}`, lp.x, lp.y);
     }
 
-    // ── Driver dots ─────────────────────────────────────────────
+    // ── Driver dots ──────────────────────────────────────────
     for (const row of drivers) {
       const drv = row.driver;
       const tel = driverTelArrays[drv];
       if (!tel) continue;
 
-      // Get distance at time t by interpolating Trel → Distance
-      const dist = interp(tel.distances, tel.trels, t);
-      const maxDist = trackArrays.maxDist || 1;
-      const normDist = dist / maxDist;
-      const tArr = trackArrays;
-      const len = tArr.x.length;
-      const rawIdx = normDist * (len - 1);
-      const idx = Math.min(Math.floor(rawIdx), len - 2);
-      const frac = rawIdx - idx;
-      const tx = tArr.x[idx] + frac * (tArr.x[idx + 1] - tArr.x[idx]);
-      const ty = tArr.y[idx] + frac * (tArr.y[idx + 1] - tArr.y[idx]);
+      // If past the driver's last active trel, freeze at last position
+      const clampedT = Math.min(t, tel.maxTrel);
+      const isGhosted = t > tel.maxTrel + 5; // 5s grace before fading
 
-      const pos = map(tx, ty);
+      let posX: number, posY: number;
+
+      if (tel.hasXY && tel.xs && tel.ys) {
+        // Use raw X/Y for precise, smooth positioning
+        posX = interp(tel.xs, tel.trels, clampedT);
+        posY = interp(tel.ys, tel.trels, clampedT);
+      } else {
+        // Fallback: distance-based positioning on track outline
+        const dist = interp(tel.distances, tel.trels, clampedT);
+        const maxDist = trackArrays.maxDist || 1;
+        const normDist = (dist % maxDist) / maxDist;
+        const len = trackArrays.x.length;
+        const rawIdx = normDist * (len - 1);
+        const idx = Math.min(Math.floor(rawIdx), len - 2);
+        const frac = rawIdx - idx;
+        posX = trackArrays.x[idx] + frac * (trackArrays.x[idx + 1] - trackArrays.x[idx]);
+        posY = trackArrays.y[idx] + frac * (trackArrays.y[idx + 1] - trackArrays.y[idx]);
+      }
+
+      const pos = map(posX, posY);
       const color = row.color || '#888888';
-      const r = Math.max(5, 6 * zoomRef.current);
+      const r = Math.max(6, 7 * zoomRef.current);
+      const alpha = isGhosted ? 0.35 : 1.0;
 
-      // Solid dot — no shadow/blur
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, r + 1.5, 0, Math.PI * 2);
-      ctx.fillStyle = '#000';
-      ctx.fill();
+      ctx.globalAlpha = alpha;
 
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.fill();
+      // Premium glow effect
+      ctx.shadowColor = isGhosted ? 'transparent' : color;
+      ctx.shadowBlur = isGhosted ? 0 : 10 * zoomRef.current;
 
+      // Dot body
       ctx.beginPath();
       ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-      ctx.lineWidth = 1.2;
+      ctx.fillStyle = isGhosted ? '#555' : color;
+      ctx.fill();
+
+      // Reset shadow before drawing the border or text
+      ctx.shadowBlur = 0;
+
+      // Subtle dark inner border to separate overlapping dots cleanly
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.lineWidth = 1.5;
       ctx.stroke();
 
-      // Driver label — only show when zoomed in enough
+      // Driver label
       if (zoomRef.current > 0.7) {
         ctx.font = `bold ${Math.round(8 * zoomRef.current)}px Inter, sans-serif`;
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = isGhosted ? 'rgba(255,255,255,0.3)' : '#ffffff';
         ctx.strokeStyle = '#000';
         ctx.lineWidth = 2.5;
         ctx.textAlign = 'center';
@@ -231,25 +312,50 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
         ctx.strokeText(drv, pos.x, pos.y - r - 2);
         ctx.fillText(drv, pos.x, pos.y - r - 2);
       }
+
+      ctx.globalAlpha = 1.0;
     }
 
     ctx.restore();
-  }, [track, corners, drivers, driverTelArrays, interp, toCanvas, trackArrays]);
+  }, [track, corners, drivers, driverTelArrays, interp, toCanvas, trackArrays, getStatusAt]);
 
-  // ── Animation loop ────────────────────────────────────────────
+  // ── Animation loop ─────────────────────────────────────────
   const animate = useCallback((ts: number) => {
     if (!playingRef.current) return;
     if (lastTimestampRef.current === null) lastTimestampRef.current = ts;
     const dt = (ts - lastTimestampRef.current) / 1000;
     lastTimestampRef.current = ts;
     timeRef.current = Math.min(timeRef.current + dt * speedRef.current, maxDuration);
+
+    // Compute current lap from leader's lap history
+    if (sessionData.isRace && sessionData.lapHistory) {
+      const leader = sessionData.leaderboard[0]?.driver;
+      if (leader && sessionData.lapHistory[leader]) {
+        const history = sessionData.lapHistory[leader];
+        let lap = 1;
+        for (const h of history) {
+          if (h.trel <= timeRef.current) lap = h.lap;
+          else break;
+        }
+        setCurrentLap(lap);
+      }
+    }
+
+    // Current flag
+    setCurrentFlag(getStatusAt(timeRef.current));
+
+    if (onTimeUpdate && Math.abs(timeRef.current - lastReportedTime.current) > 0.5) {
+      onTimeUpdate(timeRef.current);
+      lastReportedTime.current = timeRef.current;
+    }
+
     setCurrentTime(timeRef.current);
     draw(timeRef.current);
     if (timeRef.current < maxDuration) animRef.current = requestAnimationFrame(animate);
     else { setPlaying(false); playingRef.current = false; }
-  }, [draw, maxDuration]);
+  }, [draw, maxDuration, sessionData, getStatusAt, onTimeUpdate]);
 
-  // Resize + redraw on mount and window resize
+  // Resize + redraw on mount
   useEffect(() => {
     resizeCanvas();
     draw(timeRef.current);
@@ -258,7 +364,6 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
     return () => ro.disconnect();
   }, [resizeCanvas, draw]);
 
-  // Redraw on zoom/pan changes (refs) — trigger via state
   useEffect(() => { draw(timeRef.current); }, [draw, zoom]);
 
   const togglePlay = () => {
@@ -282,6 +387,27 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
     const t = parseFloat(e.target.value);
     timeRef.current = t;
     setCurrentTime(t);
+
+    // Update lap on seek
+    if (sessionData.isRace && sessionData.lapHistory) {
+      const leader = sessionData.leaderboard[0]?.driver;
+      if (leader && sessionData.lapHistory[leader]) {
+        const history = sessionData.lapHistory[leader];
+        let lap = 1;
+        for (const h of history) {
+          if (h.trel <= t) lap = h.lap;
+          else break;
+        }
+        setCurrentLap(lap);
+      }
+    }
+
+    setCurrentFlag(getStatusAt(t));
+
+    if (onTimeUpdate) {
+      onTimeUpdate(t);
+      lastReportedTime.current = t;
+    }
     draw(t);
   };
 
@@ -296,15 +422,12 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
     isPanning.current = true;
     lastPan.current = { x: e.clientX - panRef.current.x, y: e.clientY - panRef.current.y };
   };
-
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!isPanning.current) return;
     panRef.current = { x: e.clientX - lastPan.current.x, y: e.clientY - lastPan.current.y };
     draw(timeRef.current);
   };
-
   const handleMouseUp = () => { isPanning.current = false; };
-
   const resetView = () => { zoomRef.current = 1; panRef.current = { x: 0, y: 0 }; setZoom(1); };
 
   const fmt = (s: number) => {
@@ -312,6 +435,9 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
     const sec = (s % 60).toFixed(1);
     return `${m}:${sec.padStart(4, '0')}`;
   };
+
+  const flagStyle = currentFlag ? STATUS_STYLE[currentFlag.status] : null;
+  const showFlag = flagStyle && currentFlag?.status !== 'AllClear';
 
   return (
     <div className="flex flex-col gap-3 h-full">
@@ -326,6 +452,24 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
         onMouseLeave={handleMouseUp}
       >
         <canvas ref={canvasRef} className="absolute inset-0" />
+
+        {/* Lap Counter */}
+        {sessionData.isRace && (
+          <div className="absolute top-3 left-3 bg-black/70 border border-white/15 px-3 py-1.5 rounded-lg flex flex-col items-center shadow-lg backdrop-blur z-10">
+            <span className="text-[9px] uppercase tracking-widest text-white/40 font-bold mb-0.5">Lap</span>
+            <span className="font-mono font-black text-white text-lg leading-none">
+              {currentLap} <span className="text-white/30 text-sm font-semibold">/ {sessionData.totalLaps || '-'}</span>
+            </span>
+          </div>
+        )}
+
+        {/* Flag / Track Status Banner */}
+        {showFlag && flagStyle && (
+          <div className={`absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-1.5 rounded-full border backdrop-blur z-20 shadow-lg ${flagStyle.bg}`}>
+            <span className="w-2 h-2 rounded-full animate-pulse" style={{ background: flagStyle.color }} />
+            <span className="text-[11px] font-black tracking-widest uppercase">{flagStyle.label}</span>
+          </div>
+        )}
 
         {/* Zoom controls */}
         <div className="absolute top-3 right-3 flex flex-col gap-1.5 z-10">
@@ -352,9 +496,23 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
         {/* Scrubber */}
         <div className="flex items-center gap-3">
           <span className="text-white/40 text-[11px] font-mono w-12">{fmt(currentTime)}</span>
-          <input type="range" min={0} max={maxDuration} step={0.05}
-            value={currentTime} onChange={handleSeek}
-            className="flex-1 cursor-pointer" />
+          <div className="relative flex-1">
+            <input type="range" min={0} max={maxDuration} step={0.1}
+              value={currentTime} onChange={handleSeek}
+              className="w-full cursor-pointer" />
+            {/* Flag markers on scrubber */}
+            {trackStatusEvents.filter(e => e.status !== 'AllClear').map((ev, i) => {
+              const pct = (ev.trel / maxDuration) * 100;
+              const style = STATUS_STYLE[ev.status];
+              return (
+                <div key={i}
+                  className="absolute top-1/2 -translate-y-1/2 w-0.5 h-3 rounded-full opacity-70 pointer-events-none"
+                  style={{ left: `${pct}%`, background: style?.color ?? '#fff' }}
+                  title={ev.status}
+                />
+              );
+            })}
+          </div>
           <span className="text-white/40 text-[11px] font-mono w-12 text-right">{fmt(maxDuration)}</span>
         </div>
 
@@ -364,11 +522,20 @@ export default function TrackMap({ trackData, sessionData }: TrackMapProps) {
             className={`px-5 py-1.5 rounded-lg font-bold text-sm transition-all ${playing ? 'bg-red-600 hover:bg-red-700' : 'bg-red-500 hover:bg-red-600'} text-white`}>
             {playing ? '⏸ Pause' : '▶ Play'}
           </button>
-          <button onClick={() => { timeRef.current = 0; setCurrentTime(0); draw(0); }}
+          <button onClick={() => { timeRef.current = 0; setCurrentTime(0); setCurrentFlag(null); draw(0); }}
             className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm transition">⏮</button>
+
+          {/* Flag indicator next to buttons */}
+          {showFlag && flagStyle && (
+            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] font-bold ${flagStyle.bg}`}>
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: flagStyle.color }} />
+              {flagStyle.label}
+            </div>
+          )}
+
           <div className="ml-auto flex items-center gap-1">
             <span className="text-white/30 text-[10px] mr-1">SPEED</span>
-            {[1, 2, 4, 8].map(s => (
+            {[1, 2, 4, 8, 16].map(s => (
               <button key={s} onClick={() => handleSpeedChange(s)}
                 className={`w-9 py-1.5 rounded-lg text-xs font-bold transition ${speed === s ? 'bg-red-500 text-white' : 'bg-white/8 text-white/60 hover:bg-white/15'}`}>
                 {s}×

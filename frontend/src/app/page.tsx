@@ -72,6 +72,7 @@ export default function Home() {
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [tab, setTab] = useState<Tab>('animation');
+  const [currentTime, setCurrentTime] = useState(0);
 
   // Load schedule whenever year changes
   useEffect(() => {
@@ -88,6 +89,7 @@ export default function Home() {
     setError('');
     setTrackData(null);
     setSessionData(null);
+    setCurrentTime(0);
     const sessionCode = sessionType === 'Qualifying' ? 'Q' : 'R';
     const qual = sessionType === 'Qualifying' ? qualSession : undefined;
 
@@ -231,13 +233,13 @@ export default function Home() {
                     <h2 className="text-white font-bold text-sm uppercase tracking-widest mb-4 flex items-center gap-2">
                       <span className="w-1.5 h-4 bg-red-500 rounded-full" />Live Animation
                     </h2>
-                    <TrackMap trackData={trackData} sessionData={sessionData} />
+                    <TrackMap trackData={trackData} sessionData={sessionData} onTimeUpdate={setCurrentTime} />
                   </div>
                   <div className="bg-white/[0.03] rounded-2xl border border-white/10 p-4 overflow-y-auto max-h-[780px]">
                     <h2 className="text-white font-bold text-sm uppercase tracking-widest mb-4 flex items-center gap-2">
                       <span className="w-1.5 h-4 bg-red-500 rounded-full" />Timing Tower
                     </h2>
-                    <TimingTower leaderboard={sessionData.leaderboard} />
+                    <TimingTower leaderboard={sessionData.leaderboard} sessionData={sessionData} currentTime={currentTime} />
                   </div>
                 </motion.div>
               )}
