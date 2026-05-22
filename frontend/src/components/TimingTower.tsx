@@ -8,16 +8,17 @@ interface TimingTowerProps {
   leaderboard: DriverRow[];
   sessionData?: SessionData;
   currentTime?: number;
+  isPractice?: boolean;
 }
 
 // Tyre compound display config
 const COMPOUND: Record<string, { bg: string; fg: string; letter: string; name: string }> = {
-  SOFT:         { bg: '#E8002D', fg: '#fff', letter: 'S', name: 'Soft' },
-  MEDIUM:       { bg: '#FFF200', fg: '#000', letter: 'M', name: 'Medium' },
-  HARD:         { bg: '#EDEDED', fg: '#000', letter: 'H', name: 'Hard' },
+  SOFT: { bg: '#E8002D', fg: '#fff', letter: 'S', name: 'Soft' },
+  MEDIUM: { bg: '#FFF200', fg: '#000', letter: 'M', name: 'Medium' },
+  HARD: { bg: '#EDEDED', fg: '#000', letter: 'H', name: 'Hard' },
   INTERMEDIATE: { bg: '#39B54A', fg: '#fff', letter: 'I', name: 'Inter' },
-  WET:          { bg: '#0067FF', fg: '#fff', letter: 'W', name: 'Wet' },
-  UNKNOWN:      { bg: '#555555', fg: '#fff', letter: '?', name: '?' },
+  WET: { bg: '#0067FF', fg: '#fff', letter: 'W', name: 'Wet' },
+  UNKNOWN: { bg: '#555555', fg: '#fff', letter: '?', name: '?' },
 };
 
 function TyreIcon({ compound, size = 20 }: { compound: string; size?: number }) {
@@ -27,10 +28,6 @@ function TyreIcon({ compound, size = 20 }: { compound: string; size?: number }) 
       <circle cx="10" cy="10" r="9" fill="#111" />
       <circle cx="10" cy="10" r="7.5" fill={cfg.bg} />
       <circle cx="10" cy="10" r="4" fill="#111" />
-      <text x="10" y="10" textAnchor="middle" dominantBaseline="central"
-        fontSize="5.5" fontWeight="900" fontFamily="Inter,Arial,sans-serif" fill={cfg.fg}>
-        {cfg.letter}
-      </text>
     </svg>
   );
 }
@@ -45,11 +42,10 @@ function PosBadge({ pos }: { pos: number }) {
 
 function SectorTime({ value, best }: { value: string; best: boolean }) {
   return (
-    <span className={`font-mono text-[9px] px-1 py-[2px] rounded min-w-[40px] text-center transition-all ${
-      best
-        ? 'bg-purple-600 text-white font-bold shadow-[0_0_6px_rgba(168,85,247,0.5)]'
-        : 'bg-white/5 text-white/40'
-    }`}>
+    <span className={`font-mono text-[9px] px-1 py-[2px] rounded min-w-[40px] text-center transition-all ${best
+      ? 'bg-purple-600 text-white font-bold shadow-[0_0_6px_rgba(168,85,247,0.5)]'
+      : 'bg-white/5 text-white/40'
+      }`}>
       {value}
     </span>
   );
@@ -61,8 +57,8 @@ interface DynamicRow extends DriverRow {
   retired?: boolean;
 }
 
-export default function TimingTower({ leaderboard, sessionData, currentTime = 0 }: TimingTowerProps) {
-  
+export default function TimingTower({ leaderboard, sessionData, currentTime = 0, isPractice = false }: TimingTowerProps) {
+
   // Compute dynamic leaderboard with per-lap data
   const currentLeaderboard: DynamicRow[] = useMemo(() => {
     if (!sessionData?.isRace || !sessionData.lapHistory || currentTime === 0) {
@@ -72,7 +68,7 @@ export default function TimingTower({ leaderboard, sessionData, currentTime = 0 
     const updated: DynamicRow[] = leaderboard.map(row => {
       const history = sessionData.lapHistory?.[row.driver];
       if (!history || history.length === 0) return { ...row };
-      
+
       // Find the lap entry that is current: last lap completed before currentTime
       let currentLapEntry = history[0];
       for (const h of history) {
@@ -149,7 +145,6 @@ export default function TimingTower({ leaderboard, sessionData, currentTime = 0 
         {compounds.map(c => (
           <span key={c} className="flex items-center gap-1.5">
             <TyreIcon compound={c} size={14} />
-            <span className="text-[10px] text-white/50">{COMPOUND[c]?.name}</span>
           </span>
         ))}
       </div>
@@ -157,7 +152,7 @@ export default function TimingTower({ leaderboard, sessionData, currentTime = 0 
       {/* ── Column headers ────────────────────────────── */}
       <div className="grid items-center gap-1 mb-1 px-1"
         style={{ gridTemplateColumns: '22px 52px 40px 40px 40px 60px 44px 20px' }}>
-        {['P', 'Driver', 'S1', 'S2', 'S3', 'Time', 'Gap', ''].map((h, i) => (
+        {['P', 'Driver', 'S1', 'S2', 'S3', 'Time', isPractice ? 'Tyre' : 'Gap', ''].map((h, i) => (
           <span key={i} className={`text-[8px] font-bold uppercase tracking-widest text-white/25 ${i >= 2 && i <= 4 ? 'text-center' : i >= 5 ? 'text-right' : ''}`}>
             {h}
           </span>
@@ -179,13 +174,12 @@ export default function TimingTower({ leaderboard, sessionData, currentTime = 0 
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.25, layout: { duration: 0.35 } }}
-                className={`group grid items-center gap-1 px-1 py-[4px] rounded-md transition-colors ${
-                  isRetired
-                    ? 'opacity-35 grayscale'
-                    : isInPit
+                className={`group grid items-center gap-1 px-1 py-[4px] rounded-md transition-colors ${isRetired
+                  ? 'opacity-35 grayscale'
+                  : isInPit
                     ? 'bg-yellow-500/10 border border-yellow-500/20'
                     : 'hover:bg-white/[0.04]'
-                }`}
+                  }`}
                 style={{
                   gridTemplateColumns: '22px 52px 40px 40px 40px 60px 44px 20px',
                   borderLeft: `3px solid ${isRetired ? '#555' : row.color}`,
@@ -215,9 +209,11 @@ export default function TimingTower({ leaderboard, sessionData, currentTime = 0 
                   {row.bestLapStr}
                 </span>
 
-                {/* Gap */}
+                {/* Gap / Practice tyre life */}
                 <span className="font-mono text-[10px] text-right tabular-nums">
-                  {row.position === 1 ? (
+                  {isPractice ? (
+                    <span className="text-white/50">{row.tyreLife > 0 ? `${row.tyreLife}L` : '—'}</span>
+                  ) : row.position === 1 ? (
                     <span className="text-yellow-400 font-bold text-[9px]">LEAD</span>
                   ) : isRetired ? (
                     <span className="text-red-500/60 text-[9px]">DNF</span>

@@ -7,6 +7,8 @@ import TrackMap from '@/components/TrackMap';
 import TimingTower from '@/components/TimingTower';
 import LapAnalysis from '@/components/LapAnalysis';
 import TimeDeltaTab from '@/components/TimeDeltaTab';
+import PracticeDriverCards from '@/components/PracticeDriverCards';
+import QualifyingDriverCards from '@/components/QualifyingDriverCards';
 
 const YEARS = [2026, 2025, 2024];
 
@@ -63,7 +65,7 @@ export default function Home() {
   const [year, setYear] = useState(2025);
   const [races, setRaces] = useState<ScheduleRace[]>([]);
   const [selectedRace, setSelectedRace] = useState('');
-  const [sessionType, setSessionType] = useState<'Qualifying' | 'Race'>('Qualifying');
+  const [sessionType, setSessionType] = useState<string>('Qualifying');
   const [qualSession, setQualSession] = useState<'Q1' | 'Q2' | 'Q3'>('Q3');
 
   const [trackData, setTrackData] = useState<TrackData | null>(null);
@@ -73,6 +75,16 @@ export default function Home() {
   const [error, setError] = useState('');
   const [tab, setTab] = useState<Tab>('animation');
   const [currentTime, setCurrentTime] = useState(0);
+  const [focusedDriver, setFocusedDriver] = useState<string | null>(null);
+  const [seekToTrel, setSeekToTrel] = useState<number | null>(null);
+
+  // Handle "Follow fastest lap" from driver cards
+  const handleFocusDriver = useCallback((driver: string | null, startTrel: number) => {
+    setFocusedDriver(driver);
+    setSeekToTrel(startTrel);
+    // Clear after brief delay so TrackMap can consume
+    setTimeout(() => setSeekToTrel(null), 500);
+  }, []);
 
   // Load schedule whenever year changes
   useEffect(() => {
@@ -90,15 +102,25 @@ export default function Home() {
     setTrackData(null);
     setSessionData(null);
     setCurrentTime(0);
-    const sessionCode = sessionType === 'Qualifying' ? 'Q' : 'R';
-    const qual = sessionType === 'Qualifying' ? qualSession : undefined;
+
+    const sessionTypeMap: Record<string, string> = {
+      'Practice 1': 'FP1',
+      'Practice 2': 'FP2',
+      'Practice 3': 'FP3',
+      'Qualifying': 'Q',
+      'Sprint Quali': 'SQ',
+      'Sprint': 'S',
+      'Race': 'R'
+    };
+    const sessionCode = sessionTypeMap[sessionType] ?? 'Q';
+    const qual = (sessionCode === 'Q' || sessionCode === 'SQ') ? qualSession : undefined;
 
     try {
       setStatus(`Loading track layout for ${selectedRace}...`);
       const track = await fetchTrack(year, selectedRace, sessionCode);
       setTrackData(track);
 
-      setStatus(`Loading ${selectedRace} ${year} ${qual ?? 'Race'} telemetry...`);
+      setStatus(`Loading ${selectedRace} ${year} ${qual ?? sessionType} telemetry...`);
       const session = await fetchSession(year, selectedRace, sessionCode, qual);
       setSessionData(session);
       setStatus('');
@@ -111,9 +133,9 @@ export default function Home() {
   }, [year, selectedRace, sessionType, qualSession]);
 
   const TABS: { id: Tab; label: string; qualOnly?: boolean }[] = [
-    { id: 'animation', label: '🏁 Race Animation' },
-    { id: 'lapanalysis', label: '📊 Lap Analysis', qualOnly: true },
-    { id: 'timedelta', label: '⏱ Time Delta', qualOnly: true },
+    { id: 'animation', label: '🏁 Live Animation' },
+    { id: 'lapanalysis', label: '📊 Lap Analysis' },
+    { id: 'timedelta', label: '⏱ Time Delta' },
   ];
 
   return (
@@ -127,7 +149,7 @@ export default function Home() {
           </div>
           <div className="h-5 w-px bg-white/10" />
           {sessionData && (
-            <span className="text-white/40 text-sm">{selectedRace} · {year} · {sessionType === 'Qualifying' ? qualSession : 'Race'}</span>
+            <span className="text-white/40 text-sm">{selectedRace} · {year} · {sessionType === 'Qualifying' || sessionType === 'Sprint Quali' ? qualSession : sessionType}</span>
           )}
         </div>
       </header>
@@ -164,8 +186,8 @@ export default function Home() {
             {/* Session Type */}
             <div>
               <label className="block text-white/40 text-xs mb-1.5 uppercase tracking-wider">Session</label>
-              <div className="flex gap-1.5">
-                {(['Qualifying', 'Race'] as const).map(s => (
+              <div className="flex flex-wrap gap-1.5">
+                {['Practice 1', 'Practice 2', 'Practice 3', 'Qualifying', 'Sprint Quali', 'Sprint', 'Race'].map(s => (
                   <button key={s} onClick={() => setSessionType(s)}
                     className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${sessionType === s ? 'bg-red-500 text-white' : 'bg-white/10 text-white/60 hover:bg-white/20'}`}>
                     {s}
@@ -175,7 +197,7 @@ export default function Home() {
             </div>
 
             {/* Qual session */}
-            {sessionType === 'Qualifying' && (
+            {(sessionType === 'Qualifying' || sessionType === 'Sprint Quali') && (
               <div>
                 <label className="block text-white/40 text-xs mb-1.5 uppercase tracking-wider">Phase</label>
                 <div className="flex gap-1.5">
@@ -228,19 +250,67 @@ export default function Home() {
               {tab === 'animation' && (
                 <motion.div key="animation"
                   initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                  className="grid grid-cols-[1fr_300px] gap-5">
-                  <div className="bg-white/[0.03] rounded-2xl border border-white/10 p-4">
-                    <h2 className="text-white font-bold text-sm uppercase tracking-widest mb-4 flex items-center gap-2">
-                      <span className="w-1.5 h-4 bg-red-500 rounded-full" />Live Animation
-                    </h2>
-                    <TrackMap trackData={trackData} sessionData={sessionData} onTimeUpdate={setCurrentTime} />
+                  className="flex flex-col gap-5">
+                  {/* Track map + timing tower row */}
+                  <div className="grid grid-cols-[1fr_300px] gap-5">
+                    <div className="bg-white/[0.03] rounded-2xl border border-white/10 p-4 flex flex-col">
+                      <h2 className="text-white font-bold text-sm uppercase tracking-widest mb-4 shrink-0 flex items-center gap-2">
+                        <span className="w-1.5 h-4 bg-red-500 rounded-full" />Live Animation
+                        {focusedDriver && (
+                          <span className="ml-auto text-[10px] flex items-center gap-1.5 font-normal normal-case tracking-normal">
+                            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                            Following {focusedDriver}
+                            <button onClick={() => setFocusedDriver(null)} className="text-white/30 hover:text-white ml-1">✕</button>
+                          </span>
+                        )}
+                      </h2>
+                      <div className="flex-1 min-h-0">
+                        <TrackMap
+                          trackData={trackData}
+                          sessionData={sessionData}
+                          onTimeUpdate={setCurrentTime}
+                          focusedDriver={focusedDriver}
+                          seekTo={seekToTrel}
+                        />
+                      </div>
+                    </div>
+                    <div className="bg-white/[0.03] rounded-2xl border border-white/10 p-4 overflow-y-auto max-h-[780px]">
+                      <h2 className="text-white font-bold text-sm uppercase tracking-widest mb-4 flex items-center gap-2">
+                        <span className="w-1.5 h-4 bg-red-500 rounded-full" />Timing Tower
+                      </h2>
+                      <TimingTower
+                        leaderboard={sessionData.leaderboard}
+                        sessionData={sessionData}
+                        currentTime={currentTime}
+                        isPractice={['Practice 1', 'Practice 2', 'Practice 3'].includes(sessionType)}
+                      />
+                    </div>
                   </div>
-                  <div className="bg-white/[0.03] rounded-2xl border border-white/10 p-4 overflow-y-auto max-h-[780px]">
-                    <h2 className="text-white font-bold text-sm uppercase tracking-widest mb-4 flex items-center gap-2">
-                      <span className="w-1.5 h-4 bg-red-500 rounded-full" />Timing Tower
-                    </h2>
-                    <TimingTower leaderboard={sessionData.leaderboard} sessionData={sessionData} currentTime={currentTime} />
-                  </div>
+
+                  {/* Practice driver cards */}
+                  {sessionData.practiceDriverData && ['Practice 1', 'Practice 2', 'Practice 3'].includes(sessionType) && (
+                    <div className="bg-white/[0.03] rounded-2xl border border-white/10 p-4">
+                      <PracticeDriverCards
+                        data={sessionData.practiceDriverData}
+                        sessionData={sessionData}
+                        currentTime={currentTime}
+                        sessionName={`${sessionType} · ${selectedRace} ${year}`}
+                      />
+                    </div>
+                  )}
+
+                  {/* Qualifying driver cards */}
+                  {sessionData.practiceDriverData && ['Qualifying', 'Sprint Qualifying'].includes(sessionType) && (
+                    <div className="bg-white/[0.03] rounded-2xl border border-white/10 p-4">
+                      <QualifyingDriverCards
+                        data={sessionData.practiceDriverData}
+                        sessionData={sessionData}
+                        currentTime={currentTime}
+                        sessionName={`${sessionType} · ${qualSession} · ${selectedRace} ${year}`}
+                        onFocusDriver={handleFocusDriver}
+                      />
+                    </div>
+                  )}
                 </motion.div>
               )}
 

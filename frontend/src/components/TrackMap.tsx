@@ -7,6 +7,8 @@ interface TrackMapProps {
   trackData: TrackData;
   sessionData: SessionData;
   onTimeUpdate?: (time: number) => void;
+  focusedDriver?: string | null;
+  seekTo?: number | null;
 }
 
 // Track status styling
@@ -20,7 +22,7 @@ const STATUS_STYLE: Record<string, { color: string; label: string; bg: string }>
   VSCEnding:   { color: '#c4b5fd', label: 'VSC ENDING', bg: 'bg-purple-400/20 border-purple-400/40 text-purple-200' },
 };
 
-export default function TrackMap({ trackData, sessionData, onTimeUpdate }: TrackMapProps) {
+export default function TrackMap({ trackData, sessionData, onTimeUpdate, focusedDriver, seekTo }: TrackMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
@@ -47,6 +49,27 @@ export default function TrackMap({ trackData, sessionData, onTimeUpdate }: Track
   const drivers = sessionData.leaderboard;
   const telemetry = sessionData.telemetry;
   const trackStatusEvents = sessionData.trackStatusEvents ?? [];
+  const trafficIncidents = sessionData.trafficIncidents ?? [];
+  const [focusedDriverState, setFocusedDriverState] = useState<string | null>(focusedDriver ?? null);
+
+  // Sync external focusedDriver prop
+  React.useEffect(() => { setFocusedDriverState(focusedDriver ?? null); }, [focusedDriver]);
+
+  // Handle seeking from external source
+  React.useEffect(() => {
+    if (seekTo !== undefined && seekTo !== null) {
+      timeRef.current = seekTo;
+      setCurrentTime(seekTo);
+      draw(seekTo);
+      // optionally ensure we don't start playing immediately if paused, but it's safe to just seek
+    }
+  }, [seekTo]);
+
+  // Find active traffic incidents at current time (within 8s window)
+  const activeTraffic = React.useMemo(() => {
+    const WINDOW = 8;
+    return trafficIncidents.filter(inc => Math.abs(inc.trel - timeRef.current) < WINDOW);
+  }, [trafficIncidents]);
 
   // Pre-build sorted telemetry arrays once — prefer X/Y for smooth positioning
   const driverTelArrays = React.useMemo(() => {
@@ -245,24 +268,63 @@ export default function TrackMap({ trackData, sessionData, onTimeUpdate }: Track
       ctx.fillText(`${corner.Number}${corner.Letter}`, lp.x, lp.y);
     }
 
+    // ── Finish Line ──────────────────────────────────────────
+    if (trackArrays.x.length > 0) {
+      const dx = trackArrays.x[1] - trackArrays.x[0];
+      const dy = trackArrays.y[1] - trackArrays.y[0];
+      const len = Math.hypot(dx, dy);
+      if (len > 0) {
+        const nx = -dy / len;
+        const ny = dx / len;
+        
+        const lineLen = 14 * zoomRef.current;
+        const p1 = map(trackArrays.x[0] + nx * lineLen, trackArrays.y[0] + ny * lineLen);
+        const p2 = map(trackArrays.x[0] - nx * lineLen, trackArrays.y[0] - ny * lineLen);
+        
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 3 * zoomRef.current;
+        ctx.stroke();
+      }
+    }
+
     // ── Driver dots ──────────────────────────────────────────
+    const focusDrv = focusedDriverState;
+    const hasTraffic: Record<string, string> = {};
+
+    // Build active traffic map for this frame
+    const TRAFFIC_WINDOW = 8;
+    for (const inc of trafficIncidents) {
+      if (Math.abs(inc.trel - t) < TRAFFIC_WINDOW) {
+        // Fade based on how close to the incident time
+        const age = Math.abs(inc.trel - t);
+        const alpha_scale = 1 - (age / TRAFFIC_WINDOW);
+        if (alpha_scale > 0) {
+          if (!hasTraffic[inc.driver1] || inc.severity === 'red') hasTraffic[inc.driver1] = inc.color;
+          if (!hasTraffic[inc.driver2] || inc.severity === 'red') hasTraffic[inc.driver2] = inc.color;
+        }
+      }
+    }
+
     for (const row of drivers) {
       const drv = row.driver;
       const tel = driverTelArrays[drv];
       if (!tel) continue;
 
-      // If past the driver's last active trel, freeze at last position
       const clampedT = Math.min(t, tel.maxTrel);
-      const isGhosted = t > tel.maxTrel + 5; // 5s grace before fading
+      const isGhosted = t > tel.maxTrel + 5;
+      const isFocused = focusDrv === drv;
+      const isDimmed = focusDrv !== null && !isFocused;
+      const trafficColor = hasTraffic[drv];
 
       let posX: number, posY: number;
 
       if (tel.hasXY && tel.xs && tel.ys) {
-        // Use raw X/Y for precise, smooth positioning
         posX = interp(tel.xs, tel.trels, clampedT);
         posY = interp(tel.ys, tel.trels, clampedT);
       } else {
-        // Fallback: distance-based positioning on track outline
         const dist = interp(tel.distances, tel.trels, clampedT);
         const maxDist = trackArrays.maxDist || 1;
         const normDist = (dist % maxDist) / maxDist;
@@ -277,13 +339,52 @@ export default function TrackMap({ trackData, sessionData, onTimeUpdate }: Track
       const pos = map(posX, posY);
       const color = row.color || '#888888';
       const r = Math.max(6, 7 * zoomRef.current);
-      const alpha = isGhosted ? 0.35 : 1.0;
+      const alpha = isGhosted ? 0.35 : isDimmed ? 0.3 : 1.0;
 
       ctx.globalAlpha = alpha;
 
-      // Premium glow effect
-      ctx.shadowColor = isGhosted ? 'transparent' : color;
-      ctx.shadowBlur = isGhosted ? 0 : 10 * zoomRef.current;
+      // Traffic glow ring
+      if (trafficColor && !isGhosted) {
+        const incident = trafficIncidents.find(inc =>
+          (inc.driver1 === drv || inc.driver2 === drv) && Math.abs(inc.trel - t) < TRAFFIC_WINDOW
+        );
+        const incAge = incident ? Math.abs(incident.trel - t) : 0;
+        const glowAlpha = Math.max(0, 1 - incAge / TRAFFIC_WINDOW);
+        ctx.save();
+        // Outer glow ring
+        ctx.globalAlpha = glowAlpha * 0.85;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, r * 2.5, 0, Math.PI * 2);
+        ctx.strokeStyle = trafficColor;
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+        // Inner ring
+        ctx.globalAlpha = glowAlpha * 0.5;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, r * 1.6, 0, Math.PI * 2);
+        ctx.strokeStyle = trafficColor;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.restore();
+        ctx.globalAlpha = alpha;
+      }
+
+      // Spotlight ring for focused driver
+      if (isFocused && !isGhosted) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, r * 3.2, 0, Math.PI * 2);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.5 + 0.3 * Math.sin(t * 4); // pulsing
+        ctx.stroke();
+        ctx.restore();
+        ctx.globalAlpha = alpha;
+      }
+
+      // Premium glow
+      ctx.shadowColor = isGhosted || isDimmed ? 'transparent' : color;
+      ctx.shadowBlur = isGhosted || isDimmed ? 0 : (isFocused ? 18 : 10) * zoomRef.current;
 
       // Dot body
       ctx.beginPath();
@@ -291,20 +392,18 @@ export default function TrackMap({ trackData, sessionData, onTimeUpdate }: Track
       ctx.fillStyle = isGhosted ? '#555' : color;
       ctx.fill();
 
-      // Reset shadow before drawing the border or text
       ctx.shadowBlur = 0;
 
-      // Subtle dark inner border to separate overlapping dots cleanly
       ctx.beginPath();
       ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
       ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = isFocused ? 2.5 : 1.5;
       ctx.stroke();
 
       // Driver label
       if (zoomRef.current > 0.7) {
-        ctx.font = `bold ${Math.round(8 * zoomRef.current)}px Inter, sans-serif`;
-        ctx.fillStyle = isGhosted ? 'rgba(255,255,255,0.3)' : '#ffffff';
+        ctx.font = `${isFocused ? 'bold' : 'bold'} ${Math.round((isFocused ? 9 : 8) * zoomRef.current)}px Inter, sans-serif`;
+        ctx.fillStyle = isDimmed ? 'rgba(255,255,255,0.2)' : isGhosted ? 'rgba(255,255,255,0.3)' : '#ffffff';
         ctx.strokeStyle = '#000';
         ctx.lineWidth = 2.5;
         ctx.textAlign = 'center';
@@ -453,15 +552,19 @@ export default function TrackMap({ trackData, sessionData, onTimeUpdate }: Track
       >
         <canvas ref={canvasRef} className="absolute inset-0" />
 
-        {/* Lap Counter */}
-        {sessionData.isRace && (
-          <div className="absolute top-3 left-3 bg-black/70 border border-white/15 px-3 py-1.5 rounded-lg flex flex-col items-center shadow-lg backdrop-blur z-10">
-            <span className="text-[9px] uppercase tracking-widest text-white/40 font-bold mb-0.5">Lap</span>
-            <span className="font-mono font-black text-white text-lg leading-none">
-              {currentLap} <span className="text-white/30 text-sm font-semibold">/ {sessionData.totalLaps || '-'}</span>
-            </span>
-          </div>
-        )}
+        {/* Lap Counter / Time Remaining */}
+        <div className="absolute top-3 left-3 bg-black/70 border border-white/15 px-3 py-1.5 rounded-lg flex flex-col items-center shadow-lg backdrop-blur z-10">
+          <span className="text-[9px] uppercase tracking-widest text-white/40 font-bold mb-0.5">
+            {sessionData.isRace ? 'Lap' : 'Time'}
+          </span>
+          <span className="font-mono font-black text-white text-lg leading-none">
+            {sessionData.isRace ? (
+              <>{currentLap} <span className="text-white/30 text-sm font-semibold">/ {sessionData.totalLaps || '-'}</span></>
+            ) : (
+              fmt(maxDuration - currentTime)
+            )}
+          </span>
+        </div>
 
         {/* Flag / Track Status Banner */}
         {showFlag && flagStyle && (

@@ -51,15 +51,77 @@ export interface TrackStatusEvent {
   code: string;
 }
 
+export interface PracticeStint {
+  compound: string;
+  startLap: number;
+  endLap: number;
+  laps: number;
+  fresh: boolean;
+}
+
+export interface QualLap {
+  lap: number;
+  lapType: 'out' | 'hot' | 'in' | 'prep' | 'unknown';
+  lapTime: number | null;
+  lapTimeStr: string;
+  lapStartTrel: number | null;
+  lapEndTrel: number | null;
+  compound: string;
+  tyreLife: number;
+  S1: string;
+  S2: string;
+  S3: string;
+  isAccurate: boolean;
+}
+
+export interface TrafficIncident {
+  trel: number;
+  driver1: string;
+  driver2: string;
+  x: number;
+  y: number;
+  severity: 'green' | 'yellow' | 'red' | 'blue';
+  color: string;
+  lapType1: string;
+  lapType2: string;
+  pushDriver: string | null;
+  prepDriver: string | null;
+  distance: number;
+}
+
+export interface PracticeDriverInfo {
+  driver: string;
+  team: string;
+  number: string;
+  color: string;
+  teamColor: string;
+  headshotUrl?: string | null;
+  totalLaps: number;
+  stints: PracticeStint[];
+  currentCompound: string;
+  currentTyreLife: number;
+  lastLapTime: number | null;
+  lastLapStr: string;
+  bestLapTime: number | null;
+  bestLapStr: string;
+  bestLapStartTrel?: number | null;
+  bestLapEndTrel?: number | null;
+  compoundCounts: Record<string, number>;
+  qualLaps?: QualLap[];
+}
+
 export interface SessionData {
   leaderboard: DriverRow[];
   telemetry: Record<string, { Distance: number[]; Trel: number[]; Speed?: number[]; X?: number[]; Y?: number[]; Throttle?: number[]; Brake?: number[]; RPM?: number[]; nGear?: number[]; DRS?: number[]; maxTrel?: number }>;
+  fastestLapTelemetry?: Record<string, { Distance: number[]; Trel: number[]; Speed?: number[]; X?: number[]; Y?: number[]; Throttle?: number[]; Brake?: number[]; RPM?: number[]; nGear?: number[]; DRS?: number[]; maxTrel?: number }>;
   driverColors: Record<string, { color: string; team: string }>;
   maxDuration: number;
   isRace?: boolean;
   totalLaps?: number;
   lapHistory?: Record<string, LapHistoryEntry[]>;
   trackStatusEvents?: TrackStatusEvent[];
+  practiceDriverData?: Record<string, PracticeDriverInfo> | null;
+  trafficIncidents?: TrafficIncident[];
 }
 
 export interface TimeDeltaData {

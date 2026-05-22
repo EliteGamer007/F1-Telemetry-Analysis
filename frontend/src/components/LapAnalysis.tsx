@@ -286,7 +286,7 @@ export default function LapAnalysis({ sessionData }: LapAnalysisProps) {
           drivers={active.drivers}
           channel={ch}
           driverColors={driverColors}
-          telemetry={sessionData.telemetry}
+          telemetry={sessionData.fastestLapTelemetry ?? sessionData.telemetry}
         />
       ))}
     </div>
