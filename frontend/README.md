@@ -20,6 +20,30 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+Backend note
+------------
+
+This frontend expects the Python backend API to be running at `http://localhost:8000`. The API base is hard-coded in `frontend/src/lib/api.ts` as `http://localhost:8000` — change that value if you run the backend on a different host/port.
+
+Quick demo steps
+----------------
+
+1. From repository root start the backend:
+
+```bash
+uvicorn ../api:app --reload --port 8000
+```
+
+2. In a separate terminal start the frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+3. Open `http://localhost:3000` in your browser.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
