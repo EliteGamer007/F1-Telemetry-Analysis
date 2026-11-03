@@ -9,3 +9,13 @@ To update a weekend: `python -m tools.prepare_weekend --year 2026 --round 4 --tr
 Optional selected replay: `python -m tools.prepare_replay --year 2026 --round 4`. Raw cache is excluded. Revert the publishing commit to roll back. Republishing preserves old content-addressed reports. Check upstream data terms for your intended redistribution; the repository MIT license covers code, not ownership of upstream timing data.
 
 Basic checks: `python -m pytest tests -q`, `npm --prefix frontend run lint`, `npm --prefix frontend run build`. Routine CI uses synthetic fixtures; it does not download timing data.
+
+## Verified production pilot — 4 November 2026
+
+Frontend: https://f1-telemetry-sooty.vercel.app
+Backend: https://f1-telemetry-api-4k13.onrender.com
+Render service: srv-dbl2gt67bikc7387aq80, Singapore, Free (0.1 CPU / 512 MB), one worker. Vercel production variables are persisted and Git root directory is frontend.
+
+25 automated tests pass, including published report/fallback parity, all replay chunks and CORS allowlisting. Production smoke: all three reports 200, warm reads 0.627–1.637 seconds; five simultaneous reads 1.534–2.477 seconds; all eight replay chunks and 22 drivers reconstructed in 12.041 seconds with sequential downloads. Reports are 37–46 KB compressed. Invalid weekend returns 404 and disabled custom compute returns 409. Both sites are publicly accessible without login. These are single-run client observations, not capacity or cold-start guarantees; production peak memory has not been measured.
+
+Repeat: `python -m tools.benchmark_serving --api https://f1-telemetry-api-4k13.onrender.com --frontend https://f1-telemetry-sooty.vercel.app`.
