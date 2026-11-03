@@ -48,28 +48,9 @@ export default function TrackMap({ trackData, sessionData, onTimeUpdate, focused
   const { track, corners, bounds } = trackData;
   const drivers = sessionData.leaderboard;
   const telemetry = sessionData.telemetry;
-  const trackStatusEvents = sessionData.trackStatusEvents ?? [];
-  const trafficIncidents = sessionData.trafficIncidents ?? [];
-  const [focusedDriverState, setFocusedDriverState] = useState<string | null>(focusedDriver ?? null);
-
-  // Sync external focusedDriver prop
-  React.useEffect(() => { setFocusedDriverState(focusedDriver ?? null); }, [focusedDriver]);
-
-  // Handle seeking from external source
-  React.useEffect(() => {
-    if (seekTo !== undefined && seekTo !== null) {
-      timeRef.current = seekTo;
-      setCurrentTime(seekTo);
-      draw(seekTo);
-      // optionally ensure we don't start playing immediately if paused, but it's safe to just seek
-    }
-  }, [seekTo]);
-
-  // Find active traffic incidents at current time (within 8s window)
-  const activeTraffic = React.useMemo(() => {
-    const WINDOW = 8;
-    return trafficIncidents.filter(inc => Math.abs(inc.trel - timeRef.current) < WINDOW);
-  }, [trafficIncidents]);
+  const trackStatusEvents = React.useMemo(() => sessionData.trackStatusEvents ?? [], [sessionData.trackStatusEvents]);
+  const trafficIncidents = React.useMemo(() => sessionData.trafficIncidents ?? [], [sessionData.trafficIncidents]);
+  const focusedDriverState = focusedDriver ?? null;
 
   // Pre-build sorted telemetry arrays once — prefer X/Y for smooth positioning
   const driverTelArrays = React.useMemo(() => {
@@ -416,10 +397,22 @@ export default function TrackMap({ trackData, sessionData, onTimeUpdate, focused
     }
 
     ctx.restore();
-  }, [track, corners, drivers, driverTelArrays, interp, toCanvas, trackArrays, getStatusAt]);
+  }, [track, corners, drivers, driverTelArrays, interp, toCanvas, trackArrays, getStatusAt, focusedDriverState, trafficIncidents]);
+
+  useEffect(() => {
+    if (seekTo === undefined || seekTo === null) return;
+    const frame = requestAnimationFrame(() => {
+      timeRef.current = seekTo;
+      setCurrentTime(seekTo);
+      setCurrentFlag(getStatusAt(seekTo));
+      onTimeUpdate?.(seekTo);
+      draw(seekTo);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [seekTo, draw, getStatusAt, onTimeUpdate]);
 
   // ── Animation loop ─────────────────────────────────────────
-  const animate = useCallback((ts: number) => {
+  const animate = useCallback(function animateFrame(ts: number) {
     if (!playingRef.current) return;
     if (lastTimestampRef.current === null) lastTimestampRef.current = ts;
     const dt = (ts - lastTimestampRef.current) / 1000;
@@ -450,7 +443,7 @@ export default function TrackMap({ trackData, sessionData, onTimeUpdate, focused
 
     setCurrentTime(timeRef.current);
     draw(timeRef.current);
-    if (timeRef.current < maxDuration) animRef.current = requestAnimationFrame(animate);
+    if (timeRef.current < maxDuration) animRef.current = requestAnimationFrame(animateFrame);
     else { setPlaying(false); playingRef.current = false; }
   }, [draw, maxDuration, sessionData, getStatusAt, onTimeUpdate]);
 
@@ -481,6 +474,8 @@ export default function TrackMap({ trackData, sessionData, onTimeUpdate, focused
   };
 
   const handleSpeedChange = (s: number) => { speedRef.current = s; setSpeed(s); };
+  const zoomIn = () => { zoomRef.current = Math.min(6, zoomRef.current * 1.25); setZoom(zoomRef.current); };
+  const zoomOut = () => { zoomRef.current = Math.max(0.3, zoomRef.current / 1.25); setZoom(zoomRef.current); };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const t = parseFloat(e.target.value);
@@ -577,8 +572,8 @@ export default function TrackMap({ trackData, sessionData, onTimeUpdate, focused
         {/* Zoom controls */}
         <div className="absolute top-3 right-3 flex flex-col gap-1.5 z-10">
           {[
-            { label: '+', fn: () => { zoomRef.current = Math.min(6, zoomRef.current * 1.25); setZoom(zoomRef.current); } },
-            { label: '−', fn: () => { zoomRef.current = Math.max(0.3, zoomRef.current / 1.25); setZoom(zoomRef.current); } },
+            { label: '+', fn: zoomIn },
+            { label: '−', fn: zoomOut },
             { label: '⊙', fn: resetView },
           ].map(({ label, fn }) => (
             <button key={label} onClick={fn}

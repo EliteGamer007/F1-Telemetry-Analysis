@@ -468,7 +468,9 @@ def _build_session_data(year: int, gp_name: str, session_code: str, qual_session
                     lap_num = int(lap_row['LapNumber']) if pd.notna(lap_row.get('LapNumber')) else 0
                     lt = lap_row.get('LapTime')
                     fresh = bool(lap_row.get('FreshTyre', False))
-                    if cmp != prev_cmp:
+                    stint_id = lap_row.get('Stint')
+                    stint_key = (cmp, int(stint_id) if pd.notna(stint_id) else None)
+                    if stint_key != prev_cmp:
                         if current_stint:
                             stints.append(current_stint)
                         current_stint = {
@@ -478,7 +480,7 @@ def _build_session_data(year: int, gp_name: str, session_code: str, qual_session
                             'laps': 1,
                             'fresh': fresh,
                         }
-                        prev_cmp = cmp
+                        prev_cmp = stint_key
                     else:
                         current_stint['endLap'] = lap_num
                         current_stint['laps'] = current_stint['laps'] + 1
@@ -814,3 +816,12 @@ def get_time_delta(year: int, gp: str, session_code: str, qual_session: Optional
 @app.get("/health")
 def health():
     return {"status": "ok", "version": "2.0.0"}
+
+
+from race_strategy.service import create_app as create_prepared_app
+_prepared_app = create_prepared_app()
+if os.getenv("F1_PUBLIC_MODE") == "true":
+    app = _prepared_app
+else:
+    app.router.routes.extend(r for r in _prepared_app.router.routes
+                             if getattr(r, "path", "").startswith(("/api/strategy/", "/api/replay/")))

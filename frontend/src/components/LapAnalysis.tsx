@@ -46,7 +46,7 @@ function Chart({
     for (const drv of drivers) {
       const tel = telemetry[drv];
       if (!tel) continue;
-      const vals = (tel as Record<string, number[]>)[channel] ?? [];
+      const vals = tel[channel] ?? [];
       allVals.push(...vals);
       allDists.push(...(tel.Distance ?? []));
     }
@@ -61,7 +61,7 @@ function Chart({
       const tel = telemetry[drv];
       if (!tel) return { drv, d: '' };
       const dists = tel.Distance ?? [];
-      const vals = (tel as Record<string, number[]>)[channel] ?? [];
+      const vals = tel[channel] ?? [];
       if (!dists.length) return { drv, d: '' };
       const range = yMax - yMin || 1;
       const pts = dists.map((dist, i) => {
@@ -87,7 +87,7 @@ function Chart({
       const tel = telemetry[drv];
       if (!tel) return null;
       const dists = tel.Distance ?? [];
-      const vals = (tel as Record<string, number[]>)[channel] ?? [];
+      const vals = tel[channel] ?? [];
       // Binary search for closest distance
       let lo = 0, hi = dists.length - 1;
       while (lo < hi - 1) { const m = (lo + hi) >> 1; if (dists[m] <= queryDist) lo = m; else hi = m; }
@@ -97,7 +97,7 @@ function Chart({
     }).filter(Boolean) as { driver: string; color: string; value: number }[];
 
     setTooltip({
-      x: e.clientX - rect.left,
+      x: Math.min(e.clientX - rect.left + 12, rect.width - 140),
       y: 0,
       values,
       distanceKm: (queryDist / 1000).toFixed(2),
@@ -106,7 +106,6 @@ function Chart({
 
   const handleMouseLeave = () => { setTooltip(null); setCrossX(null); };
 
-  const range = yMax - yMin || 1;
   const yAxisLabels = [yMax, (yMax + yMin) / 2, yMin];
 
   return (
@@ -183,7 +182,7 @@ function Chart({
             <div
               className="absolute z-20 pointer-events-none bg-[#0f0f1a] border border-white/15 rounded-lg shadow-xl px-3 py-2 min-w-[120px]"
               style={{
-                left: Math.min(tooltip.x + 12, (svgRef.current?.getBoundingClientRect().width ?? 800) - 140),
+                left: tooltip.x,
                 top: -8,
               }}
             >

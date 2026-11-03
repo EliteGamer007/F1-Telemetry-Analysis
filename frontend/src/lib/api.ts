@@ -1,10 +1,13 @@
 // API client for the FastAPI backend
-const API_BASE = 'http://localhost:8000';
+export const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+export const PUBLIC_MODE = process.env.NEXT_PUBLIC_PREPARED_ONLY === 'true';
 
 export interface ScheduleRace {
   EventName: string;
   EventDate: string;
   EventFormat: string;
+  RoundNumber?: number;
+  sessions?: string[];
 }
 
 export interface TrackData {
@@ -145,6 +148,26 @@ export async function fetchTrack(year: number, gp: string, sessionCode: string):
 }
 
 export async function fetchSession(year: number, gp: string, sessionCode: string, qualSession?: string): Promise<SessionData> {
+  if (PUBLIC_MODE) {
+    const races = await fetchSchedule(year);
+    const race = races.find(r => r.EventName === gp);
+    if (!race?.RoundNumber || sessionCode !== 'R') throw new Error('This public pilot offers the prepared race replays in the catalog.');
+    const response = await fetch(`${API_BASE}/api/replay/${year}/${race.RoundNumber}/manifest`, { signal: AbortSignal.timeout(65000) });
+    if (!response.ok) throw new Error('Prepared replay is temporarily unavailable. Try again after the service wakes.');
+    const manifest: { session: SessionData; chunks: { id: string }[] } = await response.json();
+    const data = manifest.session;
+    data.telemetry = {}; data.fastestLapTelemetry = {};
+    // Three bounded concurrent downloads avoid flooding the free service.
+    for (let start = 0; start < manifest.chunks.length; start += 3) {
+      const chunks = await Promise.all(manifest.chunks.slice(start, start + 3).map(async chunk => {
+        const result = await fetch(`${API_BASE}/api/replay/${year}/${race.RoundNumber}/chunks/${chunk.id}`, { signal: AbortSignal.timeout(45000) });
+        if (!result.ok) throw new Error('A replay chunk could not be loaded. Please retry.');
+        return result.json() as Promise<Pick<SessionData, 'telemetry' | 'fastestLapTelemetry'>>;
+      }));
+      for (const chunk of chunks) { Object.assign(data.telemetry, chunk.telemetry); Object.assign(data.fastestLapTelemetry, chunk.fastestLapTelemetry); }
+    }
+    return data;
+  }
   let url = `${API_BASE}/api/session?year=${year}&gp=${encodeURIComponent(gp)}&session_code=${sessionCode}`;
   if (qualSession) url += `&qual_session=${qualSession}`;
   const res = await fetch(url);

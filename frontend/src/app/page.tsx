@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { fetchSchedule, fetchTrack, fetchSession, ScheduleRace, TrackData, SessionData } from '@/lib/api';
+import { fetchSchedule, fetchTrack, fetchSession, ScheduleRace, TrackData, SessionData, PUBLIC_MODE } from '@/lib/api';
+import PreRaceStrategy from '@/components/PreRaceStrategy';
 import TrackMap from '@/components/TrackMap';
 import TimingTower from '@/components/TimingTower';
 import LapAnalysis from '@/components/LapAnalysis';
@@ -62,10 +63,11 @@ function StatusBar({ message }: { message: string }) {
 }
 
 export default function Home() {
-  const [year, setYear] = useState(2025);
+  const [workspace, setWorkspace] = useState<'strategy' | 'replay'>('strategy');
+  const [year, setYear] = useState(2026);
   const [races, setRaces] = useState<ScheduleRace[]>([]);
   const [selectedRace, setSelectedRace] = useState('');
-  const [sessionType, setSessionType] = useState<string>('Qualifying');
+  const [sessionType, setSessionType] = useState<string>(PUBLIC_MODE ? 'Race' : 'Qualifying');
   const [qualSession, setQualSession] = useState<'Q1' | 'Q2' | 'Q3'>('Q3');
 
   const [trackData, setTrackData] = useState<TrackData | null>(null);
@@ -88,12 +90,13 @@ export default function Home() {
 
   // Load schedule whenever year changes
   useEffect(() => {
-    setRaces([]);
-    setSelectedRace('');
+    if (workspace !== 'replay') return;
+    let active = true;
     fetchSchedule(year)
-      .then(r => { setRaces(r); setSelectedRace(r[0]?.EventName ?? ''); })
-      .catch(() => setError('Failed to load race schedule.'));
-  }, [year]);
+      .then(r => { if (active) { setRaces(r); setSelectedRace(r[0]?.EventName ?? ''); setError(''); } })
+      .catch(() => { if (active) setError('The data service may be waking up. Try again shortly.'); });
+    return () => { active = false; };
+  }, [year, workspace]);
 
   const handleLoad = useCallback(async () => {
     if (!selectedRace) return;
@@ -133,7 +136,7 @@ export default function Home() {
   }, [year, selectedRace, sessionType, qualSession]);
 
   const TABS: { id: Tab; label: string; qualOnly?: boolean }[] = [
-    { id: 'animation', label: '🏁 Live Animation' },
+    { id: 'animation', label: '🏁 Race Replay' },
     { id: 'lapanalysis', label: '📊 Lap Analysis' },
     { id: 'timedelta', label: '⏱ Time Delta' },
   ];
@@ -147,14 +150,19 @@ export default function Home() {
             <div className="w-7 h-7 bg-red-500 rounded-md flex items-center justify-center text-sm font-black">F1</div>
             <span className="font-bold text-base tracking-tight">Telemetry Analysis</span>
           </div>
-          <div className="h-5 w-px bg-white/10" />
-          {sessionData && (
+          <div className="ml-auto flex bg-white/5 border border-white/10 rounded-lg p-1 text-xs sm:text-sm">
+            <button onClick={() => setWorkspace('strategy')} className={`px-3 py-1.5 rounded-md font-semibold ${workspace === 'strategy' ? 'bg-red-500 text-white' : 'text-white/50 hover:text-white'}`}>Strategy lab</button>
+            <button onClick={() => setWorkspace('replay')} className={`px-3 py-1.5 rounded-md font-semibold ${workspace === 'replay' ? 'bg-red-500 text-white' : 'text-white/50 hover:text-white'}`}>Replay & analysis</button>
+          </div>
+          {workspace === 'replay' && sessionData && (
             <span className="text-white/40 text-sm">{selectedRace} · {year} · {sessionType === 'Qualifying' || sessionType === 'Sprint Quali' ? qualSession : sessionType}</span>
           )}
         </div>
       </header>
 
       <main className="max-w-[1600px] mx-auto px-6 py-6 flex flex-col gap-6">
+        {workspace === 'strategy' ? <PreRaceStrategy /> : <>
+        {PUBLIC_MODE && <p className="text-xs text-white/45">Prepared historical replays · select a supported season and race. New raw data is processed offline to keep the public service within free hosting limits.</p>}
         {/* Session Selector */}
         <div className="bg-white/[0.03] rounded-2xl border border-white/10 p-5">
           <h2 className="text-white/50 text-xs font-bold uppercase tracking-widest mb-4">Session Selection</h2>
@@ -164,7 +172,7 @@ export default function Home() {
               <label className="block text-white/40 text-xs mb-1.5 uppercase tracking-wider">Year</label>
               <div className="flex gap-1.5">
                 {YEARS.map(y => (
-                  <button key={y} onClick={() => setYear(y)}
+                  <button key={y} onClick={() => { setYear(y); setRaces([]); setSelectedRace(''); setSessionData(null); setTrackData(null); }}
                     className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${year === y ? 'bg-red-500 text-white' : 'bg-white/10 text-white/60 hover:bg-white/20'}`}>
                     {y}
                   </button>
@@ -187,7 +195,7 @@ export default function Home() {
             <div>
               <label className="block text-white/40 text-xs mb-1.5 uppercase tracking-wider">Session</label>
               <div className="flex flex-wrap gap-1.5">
-                {['Practice 1', 'Practice 2', 'Practice 3', 'Qualifying', 'Sprint Quali', 'Sprint', 'Race'].map(s => (
+                {(PUBLIC_MODE ? ['Race'] : ['Practice 1', 'Practice 2', 'Practice 3', 'Qualifying', 'Sprint Quali', 'Sprint', 'Race']).map(s => (
                   <button key={s} onClick={() => setSessionType(s)}
                     className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${sessionType === s ? 'bg-red-500 text-white' : 'bg-white/10 text-white/60 hover:bg-white/20'}`}>
                     {s}
@@ -252,7 +260,7 @@ export default function Home() {
                   initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                   className="flex flex-col gap-5">
                   {/* Track map + timing tower row */}
-                  <div className="grid grid-cols-[1fr_300px] gap-5">
+                  <div className="grid lg:grid-cols-[minmax(0,1fr)_300px] gap-5">
                     <div className="bg-white/[0.03] rounded-2xl border border-white/10 p-4 flex flex-col">
                       <h2 className="text-white font-bold text-sm uppercase tracking-widest mb-4 shrink-0 flex items-center gap-2">
                         <span className="w-1.5 h-4 bg-red-500 rounded-full" />Live Animation
@@ -347,6 +355,7 @@ export default function Home() {
             </div>
           </div>
         )}
+        </>}
       </main>
 
       {status && <StatusBar message={status} />}

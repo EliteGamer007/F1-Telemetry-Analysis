@@ -1,4 +1,12 @@
 F1-Telemetry-Analysis
+=====================
+
+The new Strategy Lab compares full-distance tyre plans using practice/qualifying evidence and earlier same-era events. Includes nine prepared sensitivity scenarios, stint projections, actual tyre-set histories and explicit evidence coverage. See [model validation](docs/prerace-model-card.md) and [free deployment / update procedure](docs/deployment.md). These are experimental free-air comparisons, with no claim of validated predictive improvement. Finishing-position simulation and sequential replay learning remain future releases.
+
+Public serving: `pip install -r requirements-serve.txt`, then `uvicorn race_strategy.service:app --port 8000`. Frontend: `cd frontend`, `npm ci`, `npm run dev`. Set NEXT_PUBLIC_API_BASE_URL and NEXT_PUBLIC_PREPARED_ONLY=true for the public prepared-data mode. Existing local raw analysis still uses `uvicorn api:app --port 8000`.
+
+FastF1's archive now requires supported provider authentication for uncached timing inputs. The pilot uses existing cached observations. No subscription is purchased or required to view prepared reports.
+
 A "Pit Wall" style F1 telemetry dashboard. A FastAPI backend pulls historical and live session data via FastF1 and serves it to a React frontend, which renders a dynamic track map, synchronized telemetry traces, and sector/lap analysis.
 
 Features
