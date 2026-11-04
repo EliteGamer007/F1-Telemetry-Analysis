@@ -145,7 +145,7 @@ export default function Home() {
     <div className="min-h-screen bg-[#08080f] text-white font-[Inter,sans-serif]">
       {/* Header */}
       <header className="border-b border-white/5 bg-black/40 backdrop-blur sticky top-0 z-40">
-        <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center gap-4">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-3">
             <div className="w-7 h-7 bg-red-500 rounded-md flex items-center justify-center text-sm font-black">F1</div>
             <span className="font-bold text-base tracking-tight">Telemetry Analysis</span>
@@ -160,7 +160,7 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="max-w-[1600px] mx-auto px-6 py-6 flex flex-col gap-6">
+      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 flex flex-col gap-6">
         {workspace === 'strategy' ? <PreRaceStrategy /> : <>
         {PUBLIC_MODE && <p className="text-xs text-white/45">Prepared historical replays · select a supported season and race. New raw data is processed offline to keep the public service within free hosting limits.</p>}
         {/* Session Selector */}
@@ -232,6 +232,7 @@ export default function Home() {
           )}
         </div>
 
+        {PUBLIC_MODE && !selectedRace && !error && <p role="status" className="text-sm text-white/50">No prepared replay is available for this season. Select another season, or explore the prepared weekends in Strategy lab.</p>}
         {/* Loading */}
         {loading && <Spinner status={status} />}
 
@@ -263,7 +264,7 @@ export default function Home() {
                   <div className="grid lg:grid-cols-[minmax(0,1fr)_300px] gap-5">
                     <div className="bg-white/[0.03] rounded-2xl border border-white/10 p-4 flex flex-col">
                       <h2 className="text-white font-bold text-sm uppercase tracking-widest mb-4 shrink-0 flex items-center gap-2">
-                        <span className="w-1.5 h-4 bg-red-500 rounded-full" />Live Animation
+                        <span className="w-1.5 h-4 bg-red-500 rounded-full" />Recorded Replay
                         {focusedDriver && (
                           <span className="ml-auto text-[10px] flex items-center gap-1.5 font-normal normal-case tracking-normal">
                             <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
